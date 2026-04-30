@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### New Skills
+| Skill | Version |
+|-------|---------|
+| security-setup | 1.2.2 |
+
+### Features
+- **security-setup**: Local-first security hardening skill — installs offline pre-commit hooks for secrets (gitleaks/detect-secrets), dependency scanning (trivy), and static analysis (semgrep with local rules); prints comprehensive severity-bucketed reports; requires explicit `YES` confirmation for `--force` bypass; gates free-tier GitHub Actions CI on Phase 1 passing. Runner enforces a per-check subprocess timeout (default 120s, configurable via `timeout_seconds`) and refuses bypass without an interactive TTY.
+- **security-setup**: Cross-platform support (macOS, Linux, Windows). Pre-commit entry invokes `python3` directly (the official Windows Python launcher exposes `python3` too); the runner reads `SECURITY_CHECK_ARGS` from the environment itself. `references/tool-selection.md` adds winget/Chocolatey/Scoop install commands and documents the WSL2 path for semgrep on Windows.
+- **security-setup**: Add dry-run / backup guidance for file generation, expected-output assertion for the verify step, and explicit "rollback by stash pop" semantics in the repo-sync section.
+
+### Bug Fixes
+- **security-setup**: Correct the bypass policy — `pre-commit` redirects hook stdin to `/dev/null`, so `SECURITY_CHECK_ARGS=--force git commit` could never reach the `YES` prompt. SKILL.md, `references/templates.md`, and the SECURITY.md template now document the working two-step bypass: run the runner directly with `--force`, type `YES`, then `git commit --no-verify`. Acceptance criterion #3 is now reachable through the documented flow.
+- **security-setup**: Quote the `metadata.author` frontmatter value (contains `<` `>`) per the YAML quoting rule.
+- **security-setup**: `parse_cargo_audit` now reads `advisory.severity` instead of hardcoding `HIGH`, so low-severity advisories no longer falsely trigger the `fail_on` threshold.
+- **security-setup**: `read_json_output` now raises `JsonOutputError` on malformed JSON or unreadable report files; `run_check` records this as a `tool_error` so a tool that exits 0 with a corrupt report no longer looks like a clean run.
+- **security-setup**: `run_check` now surfaces an explicit `tool_error` when the configured tool name has no registered parser (previously findings were silently dropped). Lists the supported tool names in the error so users adding a custom check see immediately what to do.
+- **security-setup**: Document `SECURITY_CHECK_ARGS` precedence in `references/templates.md` — env flags are appended after `sys.argv[1:]` and win on conflict (argparse last-wins for booleans).
+- **security-setup**: `run_check` no longer suppresses tool errors when findings happen to be present. Non-zero return codes outside the per-tool `expected_returncodes` list (configurable via `security/security-tools.json`, defaulting to `(0, 1)` and a per-tool table for gitleaks/trivy/semgrep/bandit/cargo-audit) now always record a `tool_error`, so partial/corrupt scans for tools beyond the built-ins are surfaced instead of silently passing.
+- **security-setup**: CI workflow template no longer keys the trivy DB cache on `${{ github.run_id }}` (which created a new cache entry per run). It now derives a weekly `YYYY-WW` stamp via a `cache-stamp` step output, so the cache rotates fresh each week without unbounded growth while `restore-keys` still allows reuse within the week.
+- **security-setup**: Tightened the example `child_process.exec` Semgrep rule with a `metavariable-pattern` filter that excludes string-literal calls (e.g. `exec("ls")`), removing the false-positive class flagged in review while still catching dynamic command construction.
+
 ## v1.13.0 — 2026-04-28
 
 ### Skills Updated
