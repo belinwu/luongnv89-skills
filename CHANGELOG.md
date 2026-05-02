@@ -5,14 +5,17 @@
 ### New Skills
 | Skill | Version |
 |-------|---------|
-| security-setup | 1.2.2 |
+| security-setup | 1.3.1 |
 
 ### Features
+- **security-setup**: File-aware pre-commit scoping (1.2.2 → 1.3.0). Each check declares its own relevance rule via `triggers` in `security/security-tools.json` — `always: true` for secret scanners (gitleaks runs on every commit because secrets land in `.md`, `.json`, `.env.example`, `Dockerfile`, anywhere), `paths: [globs]` for lockfile-driven dep scans (trivy, cargo-audit) and language-driven static analysis (semgrep, bandit). A repo-wide `trip_all_paths` list (`.pre-commit-config.yaml`, `security/**`, `.github/workflows/**`, `Dockerfile*`, `.dockerignore`, `scripts/security_check.py`) forces every applicable check to run when those files are staged, so workflow injection and Dockerfile RCE never slip past category-based scoping. Skipped checks are recorded in the JSON/Markdown reports with their scope reason. CI runs `--all` as the safety net. Adds `--all` / `--staged-only` flags and a `SECURITY_CHECK_SCOPE` env override; default behavior reads `git diff --cached` and falls back to a full scan if no staged files. Result: docs-only commits skip trivy/semgrep cleanly while always-on secret scanning stays as the safety floor.
 - **security-setup**: Local-first security hardening skill — installs offline pre-commit hooks for secrets (gitleaks/detect-secrets), dependency scanning (trivy), and static analysis (semgrep with local rules); prints comprehensive severity-bucketed reports; requires explicit `YES` confirmation for `--force` bypass; gates free-tier GitHub Actions CI on Phase 1 passing. Runner enforces a per-check subprocess timeout (default 120s, configurable via `timeout_seconds`) and refuses bypass without an interactive TTY.
 - **security-setup**: Cross-platform support (macOS, Linux, Windows). Pre-commit entry invokes `python3` directly (the official Windows Python launcher exposes `python3` too); the runner reads `SECURITY_CHECK_ARGS` from the environment itself. `references/tool-selection.md` adds winget/Chocolatey/Scoop install commands and documents the WSL2 path for semgrep on Windows.
 - **security-setup**: Add dry-run / backup guidance for file generation, expected-output assertion for the verify step, and explicit "rollback by stash pop" semantics in the repo-sync section.
 
 ### Bug Fixes
+- **security-setup**: `matches_any` now also tests the trailing portion of any `**/...` glob against the path, so a pattern like `**/*.py` or `**/Cargo.lock` matches root-level files too. Previously `fnmatch` would silently skip `semgrep`/`bandit`/`cargo-audit` on a commit that touched `app.py` or `Cargo.lock` at the repo root, defeating the no-blindspot promise. (1.3.0 → 1.3.1)
+- **security-setup**: `--staged-only` now exits 2 when the staged-file list is empty (not only when git is unavailable). Previously an empty staged set fell through to a full scan, contradicting the documented "errors if no staged files are found" contract. (1.3.0 → 1.3.1)
 - **security-setup**: Correct the bypass policy — `pre-commit` redirects hook stdin to `/dev/null`, so `SECURITY_CHECK_ARGS=--force git commit` could never reach the `YES` prompt. SKILL.md, `references/templates.md`, and the SECURITY.md template now document the working two-step bypass: run the runner directly with `--force`, type `YES`, then `git commit --no-verify`. Acceptance criterion #3 is now reachable through the documented flow.
 - **security-setup**: Quote the `metadata.author` frontmatter value (contains `<` `>`) per the YAML quoting rule.
 - **security-setup**: `parse_cargo_audit` now reads `advisory.severity` instead of hardcoding `HIGH`, so low-severity advisories no longer falsely trigger the `fail_on` threshold.
