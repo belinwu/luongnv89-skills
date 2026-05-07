@@ -42,6 +42,7 @@ SKILLS_SRC_DIR=""       # path to extracted skills/ folder
 OS=""
 SKILLS=()               # discovered skill folder names
 SKILL_DESCS=()          # one-line descriptions (from frontmatter)
+SKILL_PATHS=()          # absolute source path per skill (parallel to SKILLS)
 SKILL_SEL=()            # 1/0 toggle per skill
 TOOLS=("Claude Code" "Cursor" "Windsurf" "GitHub Copilot" "OpenAI Codex" "OpenCode" "Google Antigravity")
 TOOL_SEL=()             # 1/0 toggle per tool
@@ -186,9 +187,13 @@ download_skills() {
 }
 
 # ─── Discover skills (folders containing SKILL.md) ─────────────────────────
+# Walks top-level skills/*/ and one extra level skills/*/*/ so suite umbrellas
+# (e.g., website-cloner/) and their child skills are both installable.
 discover_skills() {
-  local dir desc
-  for dir in "$SKILLS_SRC_DIR"/*/; do
+  local dir desc prev_nullglob
+  prev_nullglob=$(shopt -p nullglob)
+  shopt -s nullglob
+  for dir in "$SKILLS_SRC_DIR"/*/ "$SKILLS_SRC_DIR"/*/*/; do
     [[ -f "$dir/SKILL.md" ]] || continue
     local name
     name="$(basename "$dir")"
@@ -200,8 +205,10 @@ discover_skills() {
     fi
     SKILLS+=("$name")
     SKILL_DESCS+=("$desc")
+    SKILL_PATHS+=("${dir%/}")
     SKILL_SEL+=(0)
   done
+  eval "$prev_nullglob"
 
   if [[ ${#SKILLS[@]} -eq 0 ]]; then
     echo "${RED}No skills found in the downloaded archive.${RESET}"
@@ -337,10 +344,26 @@ strip_frontmatter() {
   awk 'BEGIN{n=0} /^---$/{n++; next} n>=2{print}' "$file"
 }
 
+# ─── Copy skill source into destination, skipping nested child skills ──────
+# Suite umbrellas (e.g., website-cloner/) physically contain their phase
+# children. Each child is independently installable via its own discover_skills
+# entry, so a plain `cp -r "$src"/*` would duplicate every child inside the
+# umbrella's destination. Skip any subdirectory that has its own SKILL.md.
+copy_skill_files() {
+  local src="$1" dest="$2"
+  local entry
+  for entry in "$src"/*; do
+    [[ -e "$entry" ]] || continue
+    if [[ -d "$entry" && -f "$entry/SKILL.md" ]]; then
+      continue
+    fi
+    cp -r "$entry" "$dest"/
+  done
+}
+
 # ─── Install one skill for one tool ────────────────────────────────────────
 install_skill_for_tool() {
-  local skill="$1" tool="$2"
-  local src="$SKILLS_SRC_DIR/$skill"
+  local skill="$1" tool="$2" src="$3"
   local skill_dir dest_file
 
   case "$tool" in
@@ -351,7 +374,7 @@ install_skill_for_tool() {
         skill_dir=".claude/skills/$skill"
       fi
       mkdir -p "$skill_dir"
-      cp -r "$src"/* "$skill_dir"/
+      copy_skill_files "$src" "$skill_dir"
       INSTALLED+=("${skill}|${tool}|${skill_dir}/")
       ;;
 
@@ -362,7 +385,7 @@ install_skill_for_tool() {
         skill_dir=".agents/skills/$skill"
       fi
       mkdir -p "$skill_dir"
-      cp -r "$src"/* "$skill_dir"/
+      copy_skill_files "$src" "$skill_dir"
       mkdir -p .cursor/rules
       dest_file=".cursor/rules/${skill}.mdc"
       strip_frontmatter "$src/SKILL.md" > "$dest_file"
@@ -376,7 +399,7 @@ install_skill_for_tool() {
         skill_dir=".agents/skills/$skill"
       fi
       mkdir -p "$skill_dir"
-      cp -r "$src"/* "$skill_dir"/
+      copy_skill_files "$src" "$skill_dir"
       mkdir -p .windsurf/rules
       dest_file=".windsurf/rules/${skill}.md"
       strip_frontmatter "$src/SKILL.md" > "$dest_file"
@@ -390,7 +413,7 @@ install_skill_for_tool() {
         skill_dir=".agents/skills/$skill"
       fi
       mkdir -p "$skill_dir"
-      cp -r "$src"/* "$skill_dir"/
+      copy_skill_files "$src" "$skill_dir"
       mkdir -p .github/instructions
       dest_file=".github/instructions/${skill}.instructions.md"
       strip_frontmatter "$src/SKILL.md" > "$dest_file"
@@ -401,13 +424,13 @@ install_skill_for_tool() {
       if [[ "$INSTALL_SCOPE" == "global" ]]; then
         skill_dir="$HOME/.agents/skills/$skill"
         mkdir -p "$skill_dir"
-        cp -r "$src"/* "$skill_dir"/
+        copy_skill_files "$src" "$skill_dir"
         mkdir -p "$HOME/.codex"
         dest_file="$HOME/.codex/AGENTS.md"
       else
         skill_dir=".agents/skills/$skill"
         mkdir -p "$skill_dir"
-        cp -r "$src"/* "$skill_dir"/
+        copy_skill_files "$src" "$skill_dir"
         dest_file="AGENTS.md"
       fi
       {
@@ -426,7 +449,7 @@ install_skill_for_tool() {
         skill_dir=".agents/skills/$skill"
       fi
       mkdir -p "$skill_dir"
-      cp -r "$src"/* "$skill_dir"/
+      copy_skill_files "$src" "$skill_dir"
       INSTALLED+=("${skill}|${tool}|${skill_dir}/")
       ;;
 
@@ -437,7 +460,7 @@ install_skill_for_tool() {
         skill_dir=".agents/skills/$skill"
       fi
       mkdir -p "$skill_dir"
-      cp -r "$src"/* "$skill_dir"/
+      copy_skill_files "$src" "$skill_dir"
       INSTALLED+=("${skill}|${tool}|${skill_dir}/")
       ;;
   esac
@@ -445,8 +468,7 @@ install_skill_for_tool() {
 
 # ─── Install one skill for ALL tools (shared .agents/skills + symlink) ────
 install_skill_all_tools() {
-  local skill="$1"
-  local src="$SKILLS_SRC_DIR/$skill"
+  local skill="$1" src="$2"
   local shared_dir dest_file
 
   # Step 1: Copy skill files to the shared canonical location (.agents/skills/)
@@ -456,7 +478,7 @@ install_skill_all_tools() {
     shared_dir=".agents/skills/$skill"
   fi
   mkdir -p "$shared_dir"
-  cp -r "$src"/* "$shared_dir"/
+  copy_skill_files "$src" "$shared_dir"
 
   # Step 2: Create symlink for Claude Code
   local claude_dir
@@ -661,12 +683,12 @@ main() {
       [[ ${SKILL_SEL[$i]} -eq 0 ]] && continue
       if [[ $INSTALL_ALL_TOOLS -eq 1 ]]; then
         echo "  ${GREEN}✔${RESET} ${BOLD}${SKILLS[$i]}${RESET} → All tools (shared + symlinks)"
-        install_skill_all_tools "${SKILLS[$i]}"
+        install_skill_all_tools "${SKILLS[$i]}" "${SKILL_PATHS[$i]}"
       else
         for (( j = 0; j < ${#TOOLS[@]}; j++ )); do
           [[ ${TOOL_SEL[$j]} -eq 0 ]] && continue
           echo "  ${GREEN}✔${RESET} ${BOLD}${SKILLS[$i]}${RESET} → ${TOOLS[$j]}"
-          install_skill_for_tool "${SKILLS[$i]}" "${TOOLS[$j]}"
+          install_skill_for_tool "${SKILLS[$i]}" "${TOOLS[$j]}" "${SKILL_PATHS[$i]}"
         done
       fi
     done
@@ -771,12 +793,12 @@ main() {
       [[ ${SKILL_SEL[$i]} -eq 0 ]] && continue
       if [[ $INSTALL_ALL_TOOLS -eq 1 ]]; then
         echo "  ${GREEN}✔${RESET} ${BOLD}${SKILLS[$i]}${RESET} → All tools (shared + symlinks)"
-        install_skill_all_tools "${SKILLS[$i]}"
+        install_skill_all_tools "${SKILLS[$i]}" "${SKILL_PATHS[$i]}"
       else
         for (( j = 0; j < ${#TOOLS[@]}; j++ )); do
           [[ ${TOOL_SEL[$j]} -eq 0 ]] && continue
           echo "  ${GREEN}✔${RESET} ${BOLD}${SKILLS[$i]}${RESET} → ${TOOLS[$j]}"
-          install_skill_for_tool "${SKILLS[$i]}" "${TOOLS[$j]}"
+          install_skill_for_tool "${SKILLS[$i]}" "${TOOLS[$j]}" "${SKILL_PATHS[$i]}"
         done
       fi
     done
