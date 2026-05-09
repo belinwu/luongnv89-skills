@@ -111,6 +111,7 @@ npx skills add https://github.com/luongnv89/skills --skill <skill-name>
 | [Frontend and Design](#frontend-and-design) | UIs, logos, themes, diagrams |
 | [Documentation](#documentation) | Docs, README, SEO, open source, agent config |
 | [App Store](#app-store) | ASO, review guideline compliance |
+| [Food and Cooking](#food-and-cooking) | Quick healthy recipes from photos or ingredients |
 | [Tooling](#tooling) | CLI builder, local LLMs, scripts, skill management |
 
 ---
@@ -178,6 +179,12 @@ npx skills add https://github.com/luongnv89/skills --skill <skill-name>
 |---|---|---|---|
 | <a id="aso-marketing"></a>[**aso-marketing**](skills/aso-marketing/) | 1.1.0 | ![max](https://img.shields.io/badge/max-darkred) | Full-lifecycle ASO for Apple App Store and Google Play |
 | <a id="appstore-review-checker"></a>[**appstore-review-checker**](skills/appstore-review-checker/) | 1.0.0 | ![high](https://img.shields.io/badge/high-red) | Pre-submission audit against 150+ Apple review guidelines |
+
+### Food and Cooking
+
+| Skill | Version | Effort | What it does |
+|---|---|---|---|
+| <a id="quick-healthy-recipes"></a>[**quick-healthy-recipes**](skills/quick-healthy-recipes/) | 1.0.0 | ![medium](https://img.shields.io/badge/medium-orange) | Three simple, fast, healthy recipes from food photos, ingredient lists, or cravings |
 
 ### Tooling
 
