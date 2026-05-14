@@ -47,6 +47,28 @@ developer-experience win on commits, not a coverage compromise overall.
 
 Prefer existing project package managers. Use only what the detected project needs.
 
+### Optional supply-chain install guardrail
+
+Socket Firewall can be used as a lightweight local default path for everyday
+dependency installs. It complements, but does not replace, lockfile scanning.
+Recommend it only as developer shell setup; the generated pre-commit hook must
+not require `sfw` unless the user explicitly asks for that policy.
+
+For macOS/Linux users on `zsh` or `bash`, add only the aliases relevant to the
+project's package managers:
+
+```bash
+alias npm="sfw npm"
+alias yarn="sfw yarn"
+alias pnpm="sfw pnpm"
+alias pip="sfw pip"
+alias uv="sfw uv"
+alias cargo="sfw cargo"
+```
+
+If Socket Firewall is missing, link to the official install instructions rather
+than pasting an unverified install command.
+
 ### macOS
 
 ```bash

@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Cross-platform (macOS, Linux, Windows). Requires git, Python 3.8+, and project write access. Uses pre-commit plus free local tools such as gitleaks, trivy, semgrep, bandit, or cargo-audit when appropriate. Semgrep on Windows requires WSL2."
 effort: high
 metadata:
-  version: 1.3.1
+  version: 1.3.2
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -92,6 +92,30 @@ Choose the smallest useful set:
 - **Static analysis**: prefer `semgrep` with local rules under `security/`.
   Add language-native scanners only when the language is present (`bandit` for
   Python, `gosec` for Go, `cargo clippy`/`cargo audit` for Rust).
+
+#### Supply-chain install guardrail
+
+When the repo uses package managers, recommend Socket Firewall as a lightweight
+local guardrail for day-to-day dependency installs. This does not replace lockfile
+scanning with `trivy`/`cargo-audit`; it shifts risk left by making risky installs
+harder before a new dependency reaches the repo.
+
+For macOS/Linux users on `zsh` or `bash`, suggest adding these aliases to the
+developer shell profile:
+
+```bash
+alias npm="sfw npm"
+alias yarn="sfw yarn"
+alias pnpm="sfw pnpm"
+alias pip="sfw pip"
+alias uv="sfw uv"
+alias cargo="sfw cargo"
+```
+
+Only include aliases for package managers the project actually uses, and document
+the guardrail in `SECURITY.md` as optional local developer setup. If Socket
+Firewall is not installed, print the official install instructions or link to
+the official docs; do not add failing hooks that require `sfw`.
 
 The hook must not call cloud services at runtime. If a scanner needs a local
 database, warm that database during setup and run with offline flags in the hook.
