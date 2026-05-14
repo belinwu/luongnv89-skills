@@ -4,7 +4,7 @@ description: "Delegate coding tasks to opencode using free cloud models. Use whe
 effort: medium
 license: MIT
 metadata:
-  version: 1.2.2
+  version: 1.3.0
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 
@@ -26,7 +26,7 @@ OpenCode (opencode.ai) is a terminal AI coding assistant that supports multiple 
 
 2. **Only select cloud models.** Never select local models (e.g., `ollama/*`, `lmstudio/*`, or any model running on localhost). Only select models from the `opencode/*` provider namespace, which are cloud-hosted on OpenCode Zen. Local models have unpredictable availability, performance, and may not support the tool-use capabilities opencode needs.
 
-3. **Always clean up after yourself.** opencode spawns background processes (LSP servers, MCP servers, node workers) that persist after the task finishes. Every execution path — success, failure, error, timeout — must end with the cleanup steps in Phase 5. Orphaned opencode processes silently eat CPU and memory, and users won't notice until their machine slows to a crawl.
+3. **Always clean up after yourself.** opencode spawns background processes (LSP servers, MCP servers, node workers) that persist after the task finishes. Every execution path — success, failure, error, timeout — must end with the cleanup steps in Phase 6. Orphaned opencode processes silently eat CPU and memory, and users won't notice until their machine slows to a crawl.
 
 ## Repo Sync Before Edits (mandatory)
 
@@ -85,52 +85,74 @@ opencode upgrade
 
 This will upgrade to the latest version if one is available, or confirm already up to date. If the upgrade fails, inform the user of the error and suggest running the command manually. If the upgrade itself breaks opencode, stop and report — do not continue.
 
-## Phase 2: Discover Free Models
+## Phase 2: Discover Free Models & Let User Pick
 
-Query the available models and identify which free ones are accessible.
+Query the available models, present the free ones to the user, and let them choose. If the user doesn't choose, fall back to the priority order.
 
 ```bash
-opencode models --verbose 2>/dev/null || opencode models
+opencode models 2>/dev/null
 ```
 
-### Free model priority list
+### Free model priority list (default order if user defers)
 
-Select the **first available** model from this ordered list:
+| Priority | Model ID | Notes |
+|----------|----------|-------|
+| 1 | `opencode/deepseek-v4-flash-free` | Strong recent free coding model — preferred default |
+| 2 | `opencode/minimax-m2.5-free` | MiniMax free tier — good general-purpose |
+| 3 | `opencode/nemotron-3-super-free` | NVIDIA Nemotron free tier |
+| 4 | `opencode/big-pickle` | Free fallback |
+| 5 | `opencode/gpt-5-nano` | Small, low-cost fallback (verify pricing) |
 
-| Priority | Model ID | Name |
-|----------|----------|------|
-| 1 | `opencode/minimax-m2.5-free` | MiniMax M2.5 Free |
-| 2 | `opencode/kimi-k2.5` | Kimi K2.5 (via Zen, check if free tier) |
-| 3 | `opencode/glm-5` | GLM 5 (via Zen, check if free tier) |
-| 4 | `opencode/mimo-v2-pro-free` | MiMo V2 Pro Free |
-| 5 | `opencode/mimo-v2-omni-free` | MiMo V2 Omni Free |
-| 6 | `opencode/big-pickle` | Big Pickle (last resort) |
-| 7 | `opencode/gpt-5-nano` | GPT 5 Nano (fallback) |
-| 8 | `opencode/nemotron-3-super-free` | Nemotron 3 Super Free (fallback) |
+Model IDs evolve. When parsing `opencode models` output, treat any `opencode/*` model whose ID ends in `-free` (or is explicitly priced $0) as free-tier eligible. Match by suffix, not by exact ID.
 
-The model IDs above are based on OpenCode Zen's free tier. When checking `opencode models` output, look for models with "$0" or "Free" pricing. The exact IDs may change — match by name if the ID format differs.
+### Selection logic
 
-**Selection logic:**
-1. Parse the output of `opencode models` to find available models
-2. **Filter out all local models** — ignore anything from `ollama/*`, `lmstudio/*`, or any provider that runs locally. Only consider models from the `opencode/*` provider namespace (cloud-hosted on OpenCode Zen)
-3. Cross-reference the remaining cloud models with the priority list above
-4. Pick the highest-priority model that appears in the available list
-5. If none of the priority models are found, look for any `opencode/*` model listed as free ($0 or "Free")
-6. If no free cloud models exist at all, inform the user and **stop** — do not fall back to local models or paid models, and do not attempt the task yourself
+1. Run `opencode models` and collect all entries.
+2. **Filter out all non-`opencode/*` models** — ignore anything from `ollama/*`, `lmstudio/*`, `nvidia/*`, or any other namespace. Only cloud-hosted `opencode/*` models qualify.
+3. Among the remaining list, identify the free candidates (suffix `-free` or known-free IDs from the priority list).
+4. **Present the free models to the user as numbered options**, in priority order, with priority 1 marked as the default. Use the `<options>` format if possible. Example:
 
-Report the selected model to the user before proceeding:
+   > I found these free cloud models available via opencode. Pick one, or accept the default.
+   >
+   > 1. `opencode/deepseek-v4-flash-free` *(default — priority 1)*
+   > 2. `opencode/minimax-m2.5-free`
+   > 3. `opencode/nemotron-3-super-free`
+   > 4. `opencode/big-pickle`
 
-> Selected free model: **[model name]** (`[model-id]`)
-> Reason: Highest priority free model available.
+5. If the user names a model, use that one. If the user says "default", "you pick", "any", or doesn't specify, use priority 1 (the highest-priority available free model).
+6. If no free cloud models exist at all, inform the user and **stop** — do not fall back to local models, paid models, or doing the task yourself.
 
-**Privacy note:** Free models on OpenCode Zen may use collected data for model improvement. Mention this to the user when selecting a free model so they can make an informed choice.
+**Privacy note** (always show this with the model list): Free models on OpenCode Zen may use collected data for model improvement.
 
-## Phase 3: Execute the Task
+## Phase 3: Confirm Before Executing
 
-Run the coding task with the selected free model.
+Before invoking opencode, show the user a one-screen summary and get explicit confirmation. This catches wrong-model or wrong-prompt mistakes before any tokens are burned.
+
+Present this block:
+
+> **Ready to delegate to opencode**
+>
+> - **Model:** `opencode/deepseek-v4-flash-free` (free tier)
+> - **Working directory:** `/Users/.../current-project`
+> - **Context files:** `path/to/foo.py`, `path/to/bar.py` *(or "none")*
+> - **Prompt:** *(quote the prompt verbatim, multi-line OK)*
+> - **Estimated duration:** unknown — opencode is non-deterministic; cleanup runs even on timeout
+>
+> Confirm to proceed, or tell me what to change (model, prompt, files).
+
+Then offer the user two `<options>`: "Proceed" and "Change something". Wait for confirmation. Do **not** invoke `opencode run` until the user confirms.
+
+If the user asks to change anything (different model, edit prompt, add/remove context files), loop back: update the field, re-show the summary, and ask again.
+
+## Phase 4: Execute the Task
+
+Run the coding task with the confirmed model. **Always run in the background with output redirected to a log file** — this is required for the low-token monitoring strategy in Phase 5.
 
 ```bash
-opencode run -m "[selected-model-id]" "[user's task prompt]"
+LOG=/tmp/opencode-$$.log
+opencode run -m "[confirmed-model-id]" "[confirmed prompt]" > "$LOG" 2>&1 &
+OPENCODE_PID=$!
+echo "opencode started: pid=$OPENCODE_PID log=$LOG"
 ```
 
 ### Handling multi-line or complex prompts
@@ -138,74 +160,67 @@ opencode run -m "[selected-model-id]" "[user's task prompt]"
 For tasks that reference files or need detailed context, use the `--file` flag:
 
 ```bash
-opencode run -m "[selected-model-id]" --file path/to/relevant-file.py "[task description]"
-```
-
-### Running in the background
-
-For long-running tasks, run in the background and monitor:
-
-```bash
-opencode run -m "[selected-model-id]" "[task]" --format json > /tmp/opencode-output.json 2>&1 &
+opencode run -m "[confirmed-model-id]" --file path/to/relevant-file.py "[task description]" > "$LOG" 2>&1 &
 OPENCODE_PID=$!
 ```
 
-## Phase 4: Monitor and Report
+Foreground execution is **discouraged** — streaming the full opencode output back into your context wastes tokens. The Phase 5 monitor reads only the log tail.
 
-While the task is running, provide periodic updates to the user.
+## Phase 5: Monitor with Minimum Tokens
 
-### For foreground execution
+opencode output is verbose. Streaming the full log back into your context is expensive — a single long run can easily push past 10k tokens of stream chatter. Use the lightweight polling protocol below instead.
 
-The output streams directly. Summarize key milestones as they appear:
-- When opencode starts processing
-- When it reads/analyzes files
-- When it begins generating code
-- When it writes output files
-- When it completes or errors
+### Polling protocol
 
-### For background execution
-
-Check progress periodically:
+Run **one** tiny status command per check. It returns at most ~200 bytes — enough to know status, elapsed time, and the latest activity line — without ingesting the whole log.
 
 ```bash
-# Check if still running
-kill -0 $OPENCODE_PID 2>/dev/null && echo "Still running..." || echo "Completed"
-
-# Check partial output
-tail -20 /tmp/opencode-output.json
+LOG=/tmp/opencode-$$.log   # the same log file from Phase 4
+status() {
+  if kill -0 $OPENCODE_PID 2>/dev/null; then s=running; else s=done; fi
+  bytes=$(wc -c < "$LOG" 2>/dev/null || echo 0)
+  last=$(tail -n 1 "$LOG" 2>/dev/null | tr -d '\r' | cut -c1-160)
+  printf 'status=%s pid=%s bytes=%s last=%q\n' "$s" "$OPENCODE_PID" "$bytes" "$last"
+}
+status
 ```
 
-### Progress report format
+That single line is your full progress sample. Do not `tail -n 50`, do not `cat $LOG`, do not stream stdout — those defeat the purpose.
 
-Provide updates in this format:
+### Cadence (mandatory)
 
-> **OpenCode Progress Report**
-> - Model: [model name]
-> - Status: [Running / Completed / Error]
-> - Duration: [time elapsed]
-> - Current activity: [what opencode is doing]
+- Wait **at least 30 seconds between polls** for short tasks, **60–120s** for longer ones.
+- Hard cap: **6 polls total** per run. If still running after that, ask the user whether to keep waiting or kill the process. Do not silently loop.
+- Detect stalls: if `bytes=` is unchanged for **two consecutive polls** (i.e., ≥60s of no output growth), treat the run as stalled — confirm with the user before killing.
+- Detect timeout: if no completion after ~5 minutes with no `bytes` growth, kill and report (then run Phase 6).
+
+### What to report between polls
+
+One short line per check, derived from the `status()` output:
+
+> *Poll 2 (t+60s): running, 4.2 KB written, last: "Editing src/foo.py …"*
+
+Do not paste the raw log. Do not summarize what opencode is "thinking" — you can't tell from a tail line. Stick to: status, elapsed, byte growth, last line.
 
 ### On completion
 
-When the task finishes:
+When `status=done`:
 
-1. Report the final status (success or failure)
-2. Show a summary of what opencode produced (files modified, code generated, etc.)
-3. Report token usage if available via `opencode stats`
-4. If the task failed, suggest the user try with a different free model from the priority list
-5. **Run Phase 5 cleanup** — this is mandatory, even on success
+1. **Read the tail only**, not the whole log: `tail -n 40 "$LOG"`. That's the summary opencode prints at the end (files changed, tokens used, errors).
+2. Report: final status (success/fail), files mentioned in the tail, and token count if opencode printed one.
+3. If the user wants the full output, point them to `$LOG` — do not paste it.
+4. If the task failed, suggest retrying with the next free model from the Phase 2 list.
+5. **Run Phase 6 cleanup** — mandatory, even on success.
 
-### On error or timeout
+### On error, stall, or timeout
 
-If opencode errors or takes too long (>5 minutes with no output):
+1. Report the error or stall to the user (one line, derived from the last poll).
+2. Suggest retrying with the next free cloud model.
+3. If all free models have been tried, suggest the user run `opencode auth list` to check provider auth.
+4. **Never** attempt the task yourself as a fallback.
+5. **Run Phase 6 cleanup** — always.
 
-1. Report the error to the user
-2. Suggest retrying with the next free cloud model in the priority list
-3. If all free cloud models have been tried, inform the user that no free option worked and suggest checking their opencode configuration
-4. **Never** attempt the task yourself as a fallback — the user invoked this skill because they want opencode to do the work, not you
-5. **Run Phase 5 cleanup** — even on error or timeout, always clean up
-
-## Phase 5: Cleanup (mandatory)
+## Phase 6: Cleanup (mandatory)
 
 Every execution — success, failure, error, or timeout — must end with cleanup. opencode spawns child processes (LSP servers, MCP servers, node workers) that persist after the main process exits. Without cleanup, these orphaned processes accumulate and drain system resources.
 
@@ -243,7 +258,7 @@ Be careful to only kill `opencode run` processes, not the user's interactive TUI
 ### Step 3: Clean up temp files
 
 ```bash
-rm -f /tmp/opencode-output.json 2>/dev/null
+rm -f "$LOG" 2>/dev/null
 ```
 
 ### Step 4: Confirm cleanup
@@ -260,28 +275,39 @@ If you couldn't kill some processes (permission denied, etc.), warn the user:
 
 A successful run produces the following visible output to the user:
 
-**Phase 2 — Model selection report:**
+**Phase 2 — Free model picker:**
 ```
-Selected free model: MiniMax M2.5 Free (opencode/minimax-m2.5-free)
-Reason: Highest priority free model available.
+Found 4 free cloud models. Pick one or accept the default.
+
+1. opencode/deepseek-v4-flash-free  (default — priority 1)
+2. opencode/minimax-m2.5-free
+3. opencode/nemotron-3-super-free
+4. opencode/big-pickle
 
 Note: Free models on OpenCode Zen may use collected data for model improvement.
 ```
 
-**Phase 4 — Progress report (streaming):**
+**Phase 3 — Confirmation summary:**
 ```
-OpenCode Progress Report
-- Model: MiniMax M2.5 Free
-- Status: Completed
-- Duration: 1m 42s
-- Current activity: Wrote 3 files, 147 lines added
+Ready to delegate to opencode
 
-Summary: opencode added a `retry` decorator to `utils/http.py`, updated
-`tests/test_http.py` with 4 new test cases, and modified `README.md` to
-document the retry behavior. All tests pass per the final output.
+- Model:    opencode/deepseek-v4-flash-free (free tier)
+- Cwd:      /Users/.../current-project
+- Files:    none
+- Prompt:   "Add a retry decorator to utils/http.py and update tests"
+
+Confirm to proceed, or tell me what to change.
 ```
 
-**Phase 5 — Cleanup confirmation:**
+**Phase 5 — Low-token progress polls:**
+```
+opencode started: pid=48211 log=/tmp/opencode-12345.log
+Poll 1 (t+30s):  running, 1.1 KB,  last: "Reading utils/http.py …"
+Poll 2 (t+90s):  running, 4.2 KB,  last: "Editing utils/http.py …"
+Poll 3 (t+150s): done,    7.8 KB,  last: "Done. 3 files changed, 147 lines added."
+```
+
+**Phase 6 — Cleanup confirmation:**
 ```
 Cleanup complete — all opencode processes from this task have been terminated.
 ```
@@ -296,7 +322,8 @@ If the task fails or times out, the output instead shows which model was tried, 
 - **opencode upgrade fails** — The upgrade command errors. The skill reports the failure, suggests running the command manually, and stops. It does not continue with a potentially broken binary.
 - **No free cloud models available** — `opencode models` output contains no `opencode/*` models with $0 or "Free" pricing. The skill informs the user that no free option is available and stops. It does not fall back to local models (ollama, lmstudio) or paid models.
 - **All priority free models tried and all fail** — After retrying with every model in the priority list, none produced usable output. The skill reports this, suggests the user check their opencode auth configuration (`opencode auth list`), and stops.
-- **Task timeout (>5 minutes with no output)** — The skill kills the opencode process tree, suggests retrying with the next free model, and runs Phase 5 cleanup. It does not attempt the task itself.
+- **Task timeout (>5 minutes with no output growth)** — The skill confirms with the user, kills the opencode process tree, suggests retrying with the next free model, and runs Phase 6 cleanup. It does not attempt the task itself.
+- **User rejects the Phase 3 confirmation** — If the user replies "no" / "change something" / edits the prompt or model, loop back to Phase 2 (model pick) or Phase 3 (re-show summary). Never invoke `opencode run` without explicit confirmation.
 - **User has an interactive opencode TUI session open** — The cleanup step detects running opencode processes. The skill kills only `opencode run` child processes, leaving the interactive TUI (`opencode` without a subcommand) untouched.
 - **Task prompt contains multi-line content or file references** — Use the `--file` flag to pass context files separately, keeping the command-line prompt concise and avoiding shell escaping issues.
 - **opencode produces output but exits non-zero** — Report the exit code and last lines of output to the user, run cleanup, and suggest verifying the task result manually before relying on it.
@@ -308,14 +335,16 @@ If the task fails or times out, the output instead shows which model was tried, 
 The skill run is considered successful when all of the following are verifiable:
 
 - [ ] **Installation verified** — Phase 1 confirms `opencode` is on PATH and reports its version before any other action.
-- [ ] **Only cloud models considered** — The model selection step filters out all `ollama/*`, `lmstudio/*`, and any other local-provider models. No local model is ever selected.
-- [ ] **Selected model reported to user** — Before execution begins, the user sees the chosen model name, its ID, and the privacy note about free-tier data collection.
+- [ ] **Only cloud `opencode/*` models considered** — Filter step rejects `ollama/*`, `lmstudio/*`, `nvidia/*`, and any other namespace. No local model is ever selected.
+- [ ] **Free models presented to the user** — Phase 2 lists every available free `opencode/*` model with priority 1 as default, plus the privacy note. The user may pick one; if they defer, priority 1 is used.
+- [ ] **Confirmation captured before execution** — Phase 3 shows model + cwd + context files + prompt, and waits for explicit user confirmation before invoking `opencode run`.
 - [ ] **Task delegated to opencode** — The coding task is executed via `opencode run`, not by the skill editing files directly or writing code itself.
-- [ ] **Progress reported** — At least one progress update is provided while the task runs, showing model, status, duration, and current activity.
-- [ ] **Completion summary delivered** — After opencode finishes, the user receives a summary of what was produced (files modified, lines changed, etc.).
-- [ ] **Cleanup runs on every exit path** — Phase 5 runs whether the task succeeded, failed, errored, or timed out. No orphaned `opencode run` processes remain after the skill exits.
-- [ ] **Temp files removed** — `/tmp/opencode-output.json` (and any other temp files created) are deleted during cleanup.
-- [ ] **No fallback to self** — If opencode is unavailable or all free models fail, the skill stops and reports the problem. It never falls back to editing files or writing code itself.
+- [ ] **Low-token monitoring used** — Phase 5 polls via the single-line `status()` helper. The raw log is never streamed back; only the last line, byte count, and status are reported per poll. Max 6 polls per run.
+- [ ] **Stall/timeout handled** — No byte growth across two consecutive polls or no completion after ~5 min triggers a confirmation with the user and (if approved) a kill + cleanup.
+- [ ] **Completion summary delivered** — On `status=done`, the skill reads only `tail -n 40 "$LOG"` and summarizes files changed and token usage.
+- [ ] **Cleanup runs on every exit path** — Phase 6 runs whether the task succeeded, failed, errored, stalled, or timed out. No orphaned `opencode run` processes remain.
+- [ ] **Temp files removed** — `$LOG` (and any other temp files created) are deleted during cleanup.
+- [ ] **No fallback to self** — If opencode is unavailable, the user rejects the confirmation, or all free models fail, the skill stops. It never falls back to editing files or writing code itself.
 
 ---
 
@@ -337,10 +366,10 @@ After completing each major phase, output a status report in this format:
 
 Adapt the check names to match what the step actually validates. Use `√` for pass, `×` for fail, and `—` to add brief context. The "Criteria" line summarizes how many acceptance criteria were met. The "Result" line gives the overall verdict.
 
-### Installation (phase 1 of 5)
+### Installation (phase 1 of 6)
 
 ```
-◆ Installation (phase 1 of 5 — opencode readiness)
+◆ Installation (phase 1 of 6 — opencode readiness)
 ··································································
   opencode found:         √ pass — /usr/local/bin/opencode
   Version current:        √ pass — already at latest
@@ -349,52 +378,64 @@ Adapt the check names to match what the step actually validates. Use `√` for p
   Result:                 PASS
 ```
 
-### Model Discovery (phase 2 of 5)
+### Model Discovery (phase 2 of 6)
 
 ```
-◆ Model Discovery (phase 2 of 5 — free model selection)
+◆ Model Discovery (phase 2 of 6 — free model picker)
 ··································································
-  Models queried:         √ pass — 12 models available
-  Free model selected:    √ pass — opencode/minimax-m2.5-free
-  Tier ranking applied:   √ pass — priority 1 model chosen
+  Models queried:         √ pass — 4 free cloud models available
+  List presented to user: √ pass — priority 1 marked default
+  User choice captured:   √ pass — user picked deepseek-v4-flash-free
   [Criteria]:             √ 3/3 met
   ____________________________
   Result:                 PASS
 ```
 
-### Execution (phase 3 of 5)
+### Confirmation (phase 3 of 6)
 
 ```
-◆ Execution (phase 3 of 5 — task delegation)
+◆ Confirmation (phase 3 of 6 — pre-run review)
 ··································································
-  Task submitted:         √ pass
-  Progress monitored:     √ pass — streaming output observed
-  Output captured:        × fail — timeout after 5 min with no output
-  [Criteria]:             √ 2/3 met
+  Summary shown:          √ pass — model, cwd, files, prompt
+  User confirmed:         √ pass — "proceed"
+  [Criteria]:             √ 2/2 met
   ____________________________
-  Result:                 PARTIAL
+  Result:                 PASS
 ```
 
-### Monitor and Report (phase 4 of 5)
+### Execution (phase 4 of 6)
 
 ```
-◆ Monitor and Report (phase 4 of 5 — progress tracking)
+◆ Execution (phase 4 of 6 — task delegation)
 ··································································
-  Progress observed:        √ pass — streaming output detected
-  Status reported:          √ pass — completion summary delivered
-  Token usage logged:       × fail — stats unavailable
-  [Criteria]:               √ 2/3 met
+  Backgrounded with log:  √ pass — pid=48211 log=/tmp/opencode-12345.log
+  Foreground avoided:     √ pass
+  [Criteria]:             √ 2/2 met
   ____________________________
-  Result:                   PARTIAL
+  Result:                 PASS
 ```
 
-### Cleanup (phase 5 of 5)
+### Monitor (phase 5 of 6)
 
 ```
-◆ Cleanup (phase 5 of 5 — process termination)
+◆ Monitor (phase 5 of 6 — low-token polling)
+··································································
+  Polls within cap:       √ pass — 3 polls (max 6)
+  Cadence respected:      √ pass — ≥30s between polls
+  Stall detected:         × n/a  — output grew every poll
+  Tail-only summary:      √ pass — last 40 lines read on done
+  [Criteria]:             √ 3/3 met
+  ____________________________
+  Result:                 PASS
+```
+
+### Cleanup (phase 6 of 6)
+
+```
+◆ Cleanup (phase 6 of 6 — process termination)
 ··································································
   Processes killed:       √ pass — OPENCODE_PID terminated
-  Temp files cleaned:     √ pass — /tmp/opencode-output.json removed
+  Temp files cleaned:     √ pass — $LOG removed
   [Criteria]:             √ 2/2 met
   ____________________________
   Result:                 PASS
