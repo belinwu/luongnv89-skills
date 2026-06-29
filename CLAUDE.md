@@ -50,6 +50,13 @@ There is **no** `npm`, `pnpm`, `make`, or `pytest` in this repo. Don't invent te
 - Prefer editing existing `references/*.md` over inflating SKILL.md.
 - Ask before destructive ops (`rm -rf`, `git reset --hard`, force-push, branch delete).
 
+## What not to put here
+
+- File-by-file skill inventories (use `README.md` catalog or `ls skills/`).
+- Duplicated CONTRIBUTING prose — link with `@CONTRIBUTING.md` when scaffolding skills.
+- Per-skill behavior (belongs in that skill's `SKILL.md` / `references/`).
+- Versions, release dates, or ticket IDs that rot quickly.
+
 ## Token Efficiency
 - Never re-read files you just wrote or edited. You know the contents.
 - Never re-run commands to "verify" unless the outcome was uncertain.
