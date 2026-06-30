@@ -9,19 +9,19 @@
   <a href="https://github.com/luongnv89/skills"><img src="https://img.shields.io/github/stars/luongnv89/skills?style=social" alt="GitHub Stars"></a>
 </p>
 
-# Ready-Made Skills for AI Coding Agents
+# Install expert workflows for AI coding agents
 
-Stop rebuilding the same instructions on every project. Install standalone, versioned skills with one command. Your agent follows the exact workflow every time.
+One command drops a tested, versioned skill into your agent. No more ad-hoc prompts. The same rigorous steps run every time.
 
-Each skill is independent — no bundle, no framework, no lock-in. Works with Claude Code, Cursor, Windsurf, GitHub Copilot, OpenAI Codex, OpenCode, and more.
+Skills are independent files. Works with Claude Code, Cursor, Windsurf, GitHub Copilot, OpenAI Codex, OpenCode.
 
-[**Browse the catalog**](#skill-catalog) | [**Install a skill**](#install)
+[**Browse catalog**](#skill-catalog) | [**Install**](#install)
 
 ---
 
 ## Install
 
-Pick one skill:
+Pick one:
 
 ```bash
 npx skills add https://github.com/luongnv89/skills --skill code-review
@@ -33,7 +33,7 @@ Pick several:
 npx skills add https://github.com/luongnv89/skills --skill code-review --skill auto-push --skill test-coverage
 ```
 
-Or grab everything:
+All of them:
 
 ```bash
 npx skills add https://github.com/luongnv89/skills
@@ -41,30 +41,22 @@ npx skills add https://github.com/luongnv89/skills
 
 ### agent-skill-manager
 
-Use [**agent-skill-manager**](https://github.com/luongnv89/agent-skill-manager) (`asm`) to manage skills across all your AI coding agents from a single TUI/CLI:
+Use [agent-skill-manager](https://github.com/luongnv89/agent-skill-manager) (`asm`) for a single TUI/CLI across agents:
 
 ```bash
 npm install -g agent-skill-manager
-```
-
-```bash
 asm install github:luongnv89/skills
 ```
 
 ```bash
-asm search        # Search skills by name or description
-```
-
-```bash
-asm list          # List all installed skills
+asm search   # find by name or description
+asm list     # show installed skills
 ```
 
 <details>
 <summary>Other install methods</summary>
 
-**Remote install (no clone)**
-
-Interactive TUI to pick skills, tools, and scope:
+**Remote (no clone)**
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/luongnv89/skills/main/remote-install.sh | bash
@@ -77,13 +69,10 @@ curl -sSL https://raw.githubusercontent.com/luongnv89/skills/main/remote-install
   --skills "code-review,auto-push" --tools "Claude Code" --scope global
 ```
 
-**Clone and run locally**
+**Clone + local**
 
 ```bash
 git clone https://github.com/luongnv89/skills.git
-```
-
-```bash
 cd skills && bash install.sh
 ```
 
@@ -91,142 +80,176 @@ cd skills && bash install.sh
 
 ---
 
-## Skill Catalog
+## How It Works
 
-Every skill is standalone. Install one, install ten -- they don't depend on each other.
+```mermaid
+graph TD
+    A[User request or trigger phrase] --> B[Agent matches skill name]
+    B --> C[Loads SKILL.md + references/]
+    C --> D[Follows exact steps + templates]
+    D --> E[Quality gates + artifacts]
+    E --> F[Report / plan / files / PR links]
+```
 
-To install any skill, copy the command below and replace `<skill-name>` with the skill name from the catalog:
+A skill is a self-contained playbook: frontmatter metadata, instructions, optional scripts, and reference docs. The installer copies it to the right path for your agent.
+
+---
+
+## Key Features
+
+| Feature | What you get |
+|---|---|
+| Standalone | Any mix installs cleanly; zero shared runtime |
+| Versioned | Semver + per-skill changelogs |
+| Structured | Steps, templates, checklists, self-validation |
+| Tool-agnostic | Same skill works in Claude Code, Cursor, Windsurf, Codex, Copilot |
+| Scannable | Tables, diagrams, short outputs |
+| Suite support | Multi-phase products (e.g. website-cloner) with independent phases |
+
+---
+
+## Quick Start
 
 ```bash
-npx skills add https://github.com/luongnv89/skills --skill <skill-name>
+npx skills add https://github.com/luongnv89/skills --skill readme-to-landing-page
+```
+
+```bash
+npx skills add https://github.com/luongnv89/skills --skill code-review --skill auto-push
+```
+
+After install, call skills by name in your agent prompts (see catalog for each skill's trigger guidance).
+
+See [skills/](skills/) for full SKILL.md files.
+
+---
+
+## Skill Catalog
+
+Every skill is standalone. Install one or many.
+
+Use:
+
+```bash
+npx skills add https://github.com/luongnv89/skills --skill <name>
 ```
 
 ### Find by Category
 
 | Category | What it covers |
 |---|---|
-| [Code Quality](#code-quality) | Reviews, optimization, testing, usability |
-| [Shipping](#shipping) | Git push, CI/CD, releases, VS Code publishing |
-| [Product Planning](#product-planning) | Ideas, naming, PRDs, architecture, task breakdown |
-| [Frontend and Design](#frontend-and-design) | UIs, logos, themes, diagrams |
-| [Documentation](#documentation) | Docs, README, SEO, open source, agent config |
-| [App Store](#app-store) | ASO, review guideline compliance |
-| [Food and Cooking](#food-and-cooking) | Quick healthy recipes from photos or ingredients |
-| [Tooling](#tooling) | CLI builder, local LLMs, scripts, skill management |
-
----
+| [Code Quality](#code-quality) | Reviews, cleanup, testing, optimization, usability |
+| [Shipping](#shipping) | Auto push, pipelines, releases, security hardening |
+| [Product Planning](#product-planning) | Validation, PRDs, architecture, tasks, naming |
+| [Frontend & Design](#frontend--design) | UIs, logos, diagrams, site clones |
+| [Documentation](#documentation) | Docs gen, READMEs, SEO, OSS prep, agent config |
+| [App Store](#app-store) | ASO, review compliance |
+| [Tooling](#tooling) | CLIs, installers, local models, agent comms |
 
 ### Code Quality
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| <a id="code-review"></a>[**code-review**](skills/code-review/) | 1.0.1 | ![medium](https://img.shields.io/badge/medium-orange) | Reviews based on Code Smells + The Pragmatic Programmer. Structured reports by severity |
-| <a id="code-optimizer"></a>[**code-optimizer**](skills/code-optimizer/) | 1.2.0 | ![medium](https://img.shields.io/badge/medium-orange) | Finds bottlenecks, memory leaks, caching gaps, concurrency issues |
-| <a id="test-coverage"></a>[**test-coverage**](skills/test-coverage/) | 1.2.0 | ![low](https://img.shields.io/badge/low-brightgreen) | Targets untested branches and edge cases in your existing test suite |
-| <a id="dont-make-me-think"></a>[**dont-make-me-think**](skills/dont-make-me-think/) | 1.2.1 | ![medium](https://img.shields.io/badge/medium-orange) | Usability reviews using Krug's principles with visual scorecards |
+| [**code-review**](skills/code-review/) | 1.1.4 | medium | Review diffs for bugs, vulns, and quality with prioritized fixes |
+| [**code-optimizer**](skills/code-optimizer/) | 1.3.1 | medium | Find perf bottlenecks, leaks, and inefficiency |
+| [**test-coverage**](skills/test-coverage/) | 1.2.3 | low | Target untested branches and edge cases |
+| [**dont-make-me-think**](skills/dont-make-me-think/) | 1.2.1 | medium | Usability review using Krug's principles |
+| [**slop-cleanup**](skills/slop-cleanup/) | 1.1.1 | high | Remove AI slop, duplication, weak types, and legacy cruft |
+| [**clean-code**](skills/clean-code/) | 1.2.0 | high | Audit against Clean Code + ATDD/TDD checklists |
 
 ### Shipping
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| <a id="auto-push"></a>[**auto-push**](skills/auto-push/) | 1.0.0 | ![low](https://img.shields.io/badge/low-brightgreen) | Stage, commit, push with secret and large-file detection |
-| <a id="devops-pipeline"></a>[**devops-pipeline**](skills/devops-pipeline/) | 1.0.0 | ![medium](https://img.shields.io/badge/medium-orange) | Pre-commit hooks + GitHub Actions for quality gates |
-| <a id="security-setup"></a>[**security-setup**](skills/security-setup/) | 1.3.2 | ![high](https://img.shields.io/badge/high-red) | Local-first security hardening with pre-commit hooks, offline scanners, reports, and gated CI |
-| <a id="release-manager"></a>[**release-manager**](skills/release-manager/) | 2.4.0 | ![max](https://img.shields.io/badge/max-darkred) | Version bump, changelog, tags, GitHub release, PyPI/npm publish |
-| <a id="vscode-extension-publisher"></a>[**vscode-extension-publisher**](skills/vscode-extension-publisher/) | 1.0.0 | ![high](https://img.shields.io/badge/high-red) | Publish VS Code extensions to the marketplace with CI setup |
+| [**auto-push**](skills/auto-push/) | 1.0.2 | low | Commit message + stage + push with secret and size checks |
+| [**devops-pipeline**](skills/devops-pipeline/) | 2.0.1 | medium | Pre-commit + GitHub Actions quality gates |
+| [**security-setup**](skills/security-setup/) | 1.3.2 | high | Local pre-commit secret scans, dep checks, static analysis, gated CI |
+| [**release-manager**](skills/release-manager/) | 2.5.0 | max | Bump, changelog, tag, GitHub release, publish |
 
 ### Product Planning
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| <a id="idea-validator"></a>[**idea-validator**](skills/idea-validator/) | 1.2.2 | ![max](https://img.shields.io/badge/max-darkred) | Feasibility and market viability feedback before you build |
-| <a id="viral-product-evaluator"></a>[**viral-product-evaluator**](skills/viral-product-evaluator/) | 1.1.0 | ![high](https://img.shields.io/badge/high-red) | Score a codebase + landing page against 32 viral-product principles |
-| <a id="brand-name-checker"></a>[**brand-name-checker**](skills/brand-name-checker/) | 1.2.0 | ![max](https://img.shields.io/badge/max-darkred) | Trademark, domain, social, npm, PyPI, Homebrew, apt -- one pass |
-| <a id="prd-generator"></a>[**prd-generator**](skills/prd-generator/) | 1.2.2 | ![max](https://img.shields.io/badge/max-darkred) | Structured PRDs from a description or validated idea |
-| <a id="tad-generator"></a>[**tad-generator**](skills/tad-generator/) | 1.2.0 | ![max](https://img.shields.io/badge/max-darkred) | Technical architecture docs with data flow diagrams |
-| <a id="tasks-generator"></a>[**tasks-generator**](skills/tasks-generator/) | 1.2.2 | ![max](https://img.shields.io/badge/max-darkred) | Sprint-ready task breakdowns from your PRD |
+| [**idea-validator**](skills/idea-validator/) | 1.4.0 | max | Market, feasibility, competitor checks for ideas |
+| [**viral-product-evaluator**](skills/viral-product-evaluator/) | 1.1.0 | high | Score codebase + landing page vs 32 viral principles |
+| [**brand-name-checker**](skills/brand-name-checker/) | 1.3.0 | max | Trademark, domain, social, registry conflicts |
+| [**prd-generator**](skills/prd-generator/) | 1.3.1 | max | Structured PRD from idea or validate notes |
+| [**tad-generator**](skills/tad-generator/) | 1.3.0 | max | Technical architecture document from PRD |
+| [**tasks-generator**](skills/tasks-generator/) | 1.2.1 | max | Sprint tasks and plan from PRD |
 
-### Frontend and Design
+### Frontend & Design
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| <a id="frontend-design"></a>[**frontend-design**](skills/frontend-design/) | 1.2.0 | ![high](https://img.shields.io/badge/high-red) | Production-grade UIs with usability-first design |
-| <a id="logo-designer"></a>[**logo-designer**](skills/logo-designer/) | 1.2.0 | ![medium](https://img.shields.io/badge/medium-orange) | Professional logos with automatic project context detection |
-| <a id="theme-transformer"></a>[**theme-transformer**](skills/theme-transformer/) | 1.0.0 | ![medium](https://img.shields.io/badge/medium-orange) | Reskin any UI into cyberpunk, neon, or digital-dark themes |
-| <a id="excalidraw-generator"></a>[**excalidraw-generator**](skills/excalidraw-generator/) | 1.2.0 | ![high](https://img.shields.io/badge/high-red) | 25+ diagram types as Excalidraw JSON |
-| <a id="drawio-generator"></a>[**drawio-generator**](skills/drawio-generator/) | 1.0.1 | ![high](https://img.shields.io/badge/high-red) | Draw.io diagrams with multi-page and C4 support |
-| <a id="openspec-task-loop"></a>[**openspec-task-loop**](skills/openspec-task-loop/) | 1.0.0 | ![medium](https://img.shields.io/badge/medium-orange) | Spec-first, one-task-at-a-time implementation loop |
-| <a id="website-cloner"></a>[**website-cloner**](skills/website-cloner/) | 1.1.0 | ![high](https://img.shields.io/badge/high-red) | 6-phase clone-and-improve orchestrator: URL → improved Vite/React/Tailwind site |
-| &nbsp;&nbsp;↳ [website-analyzer](skills/website-cloner/website-analyzer/) | 1.0.1 | ![high](https://img.shields.io/badge/high-red) | Phase 1 — 6-dimension website analysis (UI/UX, category, style, perf, security, SEO) as JSON |
-| &nbsp;&nbsp;↳ [website-clone-report](skills/website-cloner/website-clone-report/) | 1.0.1 | ![high](https://img.shields.io/badge/high-red) | Phase 2 — Stakeholder-friendly clone report from analysis JSON |
-| &nbsp;&nbsp;↳ [website-improvement-prd](skills/website-cloner/website-improvement-prd/) | 1.1.0 | ![high](https://img.shields.io/badge/high-red) | Phase 3 — Improvement PRD from analysis + report |
-| &nbsp;&nbsp;↳ [website-implementation-plan](skills/website-cloner/website-implementation-plan/) | 1.1.0 | ![high](https://img.shields.io/badge/high-red) | Phase 4 — Sprint-ready tasks.md from the PRD |
-| &nbsp;&nbsp;↳ [website-builder](skills/website-cloner/website-builder/) | 1.0.1 | ![high](https://img.shields.io/badge/high-red) | Phase 5 — Build the improved Vite/React/Tailwind site from tasks |
-| &nbsp;&nbsp;↳ [website-clone-final-report](skills/website-cloner/website-clone-final-report/) | 1.0.1 | ![high](https://img.shields.io/badge/high-red) | Phase 6 — Before/after delivery report comparing original to clone |
+| [**frontend-design**](skills/frontend-design/) | 1.2.2 | high | Production UIs with usability-first approach |
+| [**logo-designer**](skills/logo-designer/) | 1.2.1 | medium | 7 SVG logo variants from project context |
+| [**excalidraw-generator**](skills/excalidraw-generator/) | 1.3.0 | high | Diagrams as Excalidraw JSON (flow, C4, ER, etc.) |
+| [**drawio-generator**](skills/drawio-generator/) | 1.2.0 | high | Diagrams as draw.io XML with C4 support |
+| [**website-cloner**](skills/website-cloner/) | 1.1.1 | high | 6-phase URL to improved Vite/React/Tailwind site |
+
+**Website cloner phases** (install individually or as suite):
+
+| Phase | Version | What it does |
+|---|---|---|
+| website-analyzer | 1.0.2 | 6-dimension analysis → JSON |
+| website-clone-report | 1.0.2 | Stakeholder report from analysis |
+| website-improvement-prd | 1.1.1 | Improvement PRD |
+| website-implementation-plan | 1.1.0 | tasks.md from PRD |
+| website-builder | 1.0.2 | Build improved site |
+| website-clone-final-report | 1.0.1 | Before/after summary |
 
 ### Documentation
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| <a id="docs-generator"></a>[**docs-generator**](skills/docs-generator/) | 1.2.0 | ![low](https://img.shields.io/badge/low-brightgreen) | Restructure scattered docs into a coherent hierarchy |
-| <a id="readme-to-landing-page"></a>[**readme-to-landing-page**](skills/readme-to-landing-page/) | 2.0.0 | ![high](https://img.shields.io/badge/high-red) | Transform any README into a landing page (PAS, AIDA, StoryBrand) |
-| <a id="seo-ai-optimizer"></a>[**seo-ai-optimizer**](skills/seo-ai-optimizer/) | 1.0.1 | ![high](https://img.shields.io/badge/high-red) | Technical SEO, structured data, and AI bot accessibility |
-| <a id="oss-ready"></a>[**oss-ready**](skills/oss-ready/) | 1.1.0 | ![low](https://img.shields.io/badge/low-brightgreen) | LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, GitHub templates |
-| <a id="agent-config"></a>[**agent-config**](skills/agent-config/) | 1.1.0 | ![medium](https://img.shields.io/badge/medium-orange) | CLAUDE.md and AGENTS.md following best practices |
+| [**docs-generator**](skills/docs-generator/) | 1.2.3 | low | Restructure docs into clear hierarchy |
+| [**readme-to-landing-page**](skills/readme-to-landing-page/) | 2.1.0 | high | Turn README into scannable landing page (PAS/AIDA/StoryBrand) |
+| [**seo-ai-optimizer**](skills/seo-ai-optimizer/) | 1.2.0 | high | Technical SEO + AI-bot directives |
+| [**oss-ready**](skills/oss-ready/) | 1.2.0 | low | Add OSS files and templates |
+| [**agent-config**](skills/agent-config/) | 1.3.0 | medium | CLAUDE.md + AGENTS.md per best practices |
 
 ### App Store
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| <a id="aso-marketing"></a>[**aso-marketing**](skills/aso-marketing/) | 1.1.0 | ![max](https://img.shields.io/badge/max-darkred) | Full-lifecycle ASO for Apple App Store and Google Play |
-| <a id="appstore-review-checker"></a>[**appstore-review-checker**](skills/appstore-review-checker/) | 1.0.0 | ![high](https://img.shields.io/badge/high-red) | Pre-submission audit against 150+ Apple review guidelines |
-
-### Food and Cooking
-
-| Skill | Version | Effort | What it does |
-|---|---|---|---|
-| <a id="quick-healthy-recipes"></a>[**quick-healthy-recipes**](skills/quick-healthy-recipes/) | 1.0.0 | ![medium](https://img.shields.io/badge/medium-orange) | Three simple, fast, healthy recipes from food photos, ingredient lists, or cravings |
+| [**aso-marketing**](skills/aso-marketing/) | 1.2.0 | max | App Store + Google Play keyword and metadata optimization |
+| [**appstore-review-checker**](skills/appstore-review-checker/) | 1.2.0 | high | Pre-submission audit vs Apple guidelines |
 
 ### Tooling
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| <a id="cli-builder"></a>[**cli-builder**](skills/cli-builder/) | 1.0.0 | ![high](https://img.shields.io/badge/high-red) | Build production CLI tools via 5-step approval-gated workflow |
-| <a id="ollama-optimizer"></a>[**ollama-optimizer**](skills/ollama-optimizer/) | 1.0.1 | ![medium](https://img.shields.io/badge/medium-orange) | Tune Ollama for max speed based on your GPU/RAM/CPU |
-| <a id="install-script-generator"></a>[**install-script-generator**](skills/install-script-generator/) | 2.0.0 | ![high](https://img.shields.io/badge/high-red) | Cross-platform installers with environment detection |
-| <a id="github-issue-creator"></a>[**github-issue-creator**](skills/github-issue-creator/) | 1.0.0 | ![medium](https://img.shields.io/badge/medium-orange) | Issues from screenshots, emails, bug reports -- with PII redaction |
-| <a id="opencode-runner"></a>[**opencode-runner**](skills/opencode-runner/) | 1.2.0 | ![medium](https://img.shields.io/badge/medium-orange) | Delegate tasks to opencode with free cloud models |
-| <a id="tmux-agent-comms"></a>[**tmux-agent-comms**](skills/tmux-agent-comms/) | 1.3.0 | ![medium](https://img.shields.io/badge/medium-orange) | Spawn, message, and tear down AI agents in tmux sessions |
-| <a id="context-hub"></a>[**context-hub**](skills/context-hub/) | 1.0.0 | ![low](https://img.shields.io/badge/low-brightgreen) | Fetch current API/SDK docs before writing integration code |
-| <a id="skill-creator"></a>[**skill-creator**](skills/skill-creator/) | 1.1.0 | ![max](https://img.shields.io/badge/max-darkred) | Create, validate, and package your own skills |
-| <a id="skill-inventory-auditor"></a>[**skill-inventory-auditor**](skills/skill-inventory-auditor/) | 1.0.0 | ![low](https://img.shields.io/badge/low-brightgreen) | Find and remove duplicate skill installations |
+| [**cli-builder**](skills/cli-builder/) | 1.0.3 | high | 5-step CLI tool builder with approval gates |
+| [**ollama-optimizer**](skills/ollama-optimizer/) | 1.0.4 | medium | Hardware-aware Ollama tuning |
+| [**install-script-generator**](skills/install-script-generator/) | 2.1.0 | high | Cross-platform install.sh with env detection |
+| [**opencode-runner**](skills/opencode-runner/) | 1.4.0 | medium | Delegate work to opencode free cloud models |
+| [**tmux-agent-comms**](skills/tmux-agent-comms/) | 1.3.0 | medium | Spawn, message, read CLI agents in tmux |
 
-### Suite Folders
+---
 
-Most skills live directly under `skills/<name>/`. Multi-skill products that share a single domain group their pieces in a **suite folder** — an umbrella skill at `skills/<umbrella>/` with its phase skills nested at `skills/<umbrella>/<phase-skill>/`. The umbrella orchestrates the phases; each phase skill stays independently installable.
+## Suite Folders
 
-The current suite is [**website-cloner**](skills/website-cloner/) (6 phases nested under `skills/website-cloner/`, indented in the catalog above with `↳`). The installers (`install.sh`, `remote-install.sh`) discover both top-level and nested skills, so you can install the whole suite or a single phase.
+Most skills are `skills/<name>/`. Multi-phase products live under a suite folder: umbrella at `skills/<umbrella>/` + phases at `skills/<umbrella>/<phase>/`.
 
-When building your own multi-skill product, mirror this layout: one umbrella + N phase skills under it.
+Current suite: [website-cloner](skills/website-cloner/). Install the umbrella or any phase. Installers discover both levels.
+
+Mirror the layout for your own multi-skill products.
 
 ---
 
 ## FAQ
 
-**Do I need all the skills?**
-No. Each skill is independent. Install only what you need.
+**Do I need every skill?**  
+No. Pick only what you need. All are independent.
 
-**Which AI tools are supported?**
-Any AI coding tool that supports agent skills. Tested with Claude Code, Cursor, Windsurf, GitHub Copilot, OpenAI Codex, and OpenCode. The installer handles file locations and formats automatically.
+**Which agents work?**  
+Any that load external skill files. Tested with Claude Code, Cursor, Windsurf, GitHub Copilot, OpenAI Codex, OpenCode.
 
-**Can I create my own skills?**
-Yes. Use the [skill-creator](skills/skill-creator/) skill or follow the [Contributing Guide](CONTRIBUTING.md).
+**How do I make my own?**  
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) or use patterns from existing skills.
 
-**How is this different from custom prompts?**
-A skill is a structured workflow with references, templates, and quality checks -- version-controlled and shareable. A prompt is a one-off instruction.
-
-**Does this affect my runtime code?**
-No. Skills guide your AI agent during development. Nothing to deploy, no runtime dependencies.
+**Do skills change my runtime code?**  
+No. They only guide the agent during development.
 
 ---
 
@@ -236,21 +259,21 @@ No. Skills guide your AI agent during development. Nothing to deploy, no runtime
 npx skills add https://github.com/luongnv89/skills --skill code-review
 ```
 
-[**View all skills**](./skills) | [**Contribute**](CONTRIBUTING.md) | MIT Licensed
+[**All skills**](./skills) · [**Contribute**](CONTRIBUTING.md) · MIT
 
 ---
 
 <details>
-<summary><b>Supported Tool Paths (Manual Installation)</b></summary>
+<summary><b>Supported Tool Paths</b></summary>
 
-| Tool | Global path | Project path |
+| Tool | Global | Project |
 |---|---|---|
-| **Claude Code** | `~/.claude/skills/<skill>/` | `.claude/skills/<skill>/` |
-| **Cursor** | `~/.agents/skills/<skill>/` + `.cursor/rules/<skill>.mdc` | same, relative |
-| **Windsurf** | `~/.agents/skills/<skill>/` + `.windsurf/rules/<skill>.md` | same, relative |
-| **GitHub Copilot** | `~/.agents/skills/<skill>/` + `.github/instructions/<skill>.instructions.md` | same, relative |
-| **OpenAI Codex** | `~/.agents/skills/<skill>/` + `~/.codex/AGENTS.md` | same, relative |
-| **OpenCode** | `~/.agents/skills/<skill>/` | same, relative |
+| Claude Code | `~/.claude/skills/<skill>/` | `.claude/skills/<skill>/` |
+| Cursor | `~/.agents/skills/<skill>/` + `.cursor/rules/<skill>.mdc` | same |
+| Windsurf | `~/.agents/skills/<skill>/` + `.windsurf/rules/<skill>.md` | same |
+| GitHub Copilot | `~/.agents/skills/<skill>/` + `.github/instructions/<skill>.instructions.md` | same |
+| OpenAI Codex | `~/.agents/skills/<skill>/` + `~/.codex/AGENTS.md` | same |
+| OpenCode | `~/.agents/skills/<skill>/` | same |
 
 </details>
 
@@ -259,62 +282,59 @@ npx skills add https://github.com/luongnv89/skills --skill code-review
 
 ```
 .
-├── skills/              # Skill source files
-│   └── skill-name/
-│       ├── SKILL.md     # Skill definition
-│       ├── scripts/     # Optional scripts
-│       ├── references/  # Optional docs
-│       └── assets/      # Optional templates
-└── .claude/             # Claude-specific config
+├── skills/
+│   └── <name>/
+│       ├── SKILL.md
+│       ├── scripts/
+│       ├── references/
+│       └── docs/
+└── install.sh / remote-install.sh
 ```
-
 </details>
 
 <details>
-<summary><b>Creating New Skills</b></summary>
+<summary><b>Creating Skills</b></summary>
 
-Use the **skill-creator** skill or create manually:
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```markdown
+Minimal:
+
+```yaml
 ---
 name: my-skill
-version: 1.0.0
-description: What it does and when to use it
+description: "When to use and what it produces"
+metadata:
+  version: 1.0.0
+  author: "Your Name"
 ---
-
-# Instructions for the AI agent...
+# Agent instructions here. Keep SKILL.md under 500 lines.
 ```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 </details>
 
 <details>
 <summary><b>Contributing</b></summary>
 
-Contributions are welcome. Read the [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
-
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 </details>
 
 <details>
 <summary><b>Security</b></summary>
 
-See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
-
+See [SECURITY.md](SECURITY.md).
 </details>
 
 <details>
 <summary><b>Acknowledgements</b></summary>
 
-- [**frontend-design**](skills/frontend-design/) -- inspired by Anthropic's official [frontend-design](https://github.com/anthropics/claude-code/tree/main/plugins/frontend-design) plugin. Independent implementation with a default style guide and usability principles.
-- [**skill-creator**](skills/skill-creator/) -- customized from Anthropic's official [skill-creator](https://github.com/anthropics/skills/tree/main/skills/skill-creator) (Apache 2.0). Added README.md generation step.
-
+- frontend-design draws from Anthropic's patterns.
+- Many skills follow the conventions established in the skill-creator lineage.
 </details>
 
 ---
 
 <p align="center">
-  <a href="https://luongnv.com">Website</a> --
-  <a href="https://github.com/luongnv89/claude-howto">Claude How-To</a> --
+  <a href="https://luongnv.com">Website</a> ·
+  <a href="https://github.com/luongnv89/claude-howto">Claude How-To</a> ·
   <a href="https://medium.com/@luongnv89">Blog</a>
 </p>
