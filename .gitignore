@@ -40,6 +40,11 @@ PHASE_1_SUMMARY.md
 SKILL.md.bak
 
 # AI tool config/scratch folders (per-vendor, not part of the catalog)
+.agents/
+.claude/skills/stripe-best-practices
+.claude/skills/stripe-projects
+.claude/skills/upgrade-stripe
+.claude/skills/website-cloner
 .ai-tools/
 .adal/
 .augment/
