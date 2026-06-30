@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Skills — Ready-made workflows for AI coding agents</title>
+  <meta name="description" content="Browse 40+ standalone agent skills. Install with one command. Works with Claude Code, Cursor, Copilot, and more. MIT licensed.">
+  <link rel="icon" href="assets/logo/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --surface-2: #1a1a1a;
+      --border: #262626;
+      --text: #f5f5f5;
+      --muted: #a3a3a3;
+      --accent: #22c55e;
+      --accent-dim: #16a34a;
+      --accent-glow: rgba(34, 197, 94, 0.15);
+      --max: 1120px;
+      --radius: 12px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: "Instrument Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .mono { font-family: "IBM Plex Mono", monospace; }
+
+    .container {
+      width: min(var(--max), calc(100% - 2rem));
+      margin-inline: auto;
+    }
+
+    /* Nav */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10, 10, 10, 0.85);
+      backdrop-filter: blur(12px);
+    }
+
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 0;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .brand img { width: 36px; height: 36px; }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      font-size: 0.9rem;
+    }
+
+    .nav-links a { color: var(--muted); text-decoration: none; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .btn:hover { text-decoration: none; transform: translateY(-1px); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #0a0a0a;
+      box-shadow: 0 0 0 0 var(--accent-glow);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-dim);
+      box-shadow: 0 4px 24px var(--accent-glow);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover { border-color: var(--muted); }
+
+    /* Hero */
+    .hero {
+      padding: 5rem 0 4rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, var(--accent-glow), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero .container { position: relative; }
+
+    .badge {
+      display: inline-block;
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+    }
+
+    .badge strong { color: var(--accent); }
+
+    h1 {
+      font-size: clamp(2.25rem, 5vw, 3.5rem);
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      max-width: 18ch;
+      margin-inline: auto;
+    }
+
+    .hero-sub {
+      margin-top: 1.25rem;
+      font-size: clamp(1.05rem, 2vw, 1.25rem);
+      color: var(--muted);
+      max-width: 52ch;
+      margin-inline: auto;
+    }
+
+    .hero-cta {
+      margin-top: 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+    }
+
+    .trust-bar {
+      margin-top: 2.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      justify-content: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .trust-bar span { display: flex; align-items: center; gap: 0.4rem; }
+    .trust-bar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+    /* Sections */
+    section { padding: 4.5rem 0; }
+
+    section + section { border-top: 1px solid var(--border); }
+
+    .section-label {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    h2 {
+      font-size: clamp(1.75rem, 3vw, 2.25rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+    }
+
+    .lead {
+      color: var(--muted);
+      font-size: 1.1rem;
+      max-width: 60ch;
+      margin-bottom: 2rem;
+    }
+
+    /* Cards grid */
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+
+    .card h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .card p { color: var(--muted); font-size: 0.95rem; }
+
+    /* Features */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .feature {
+      padding: 1.5rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+    }
+
+    .feature-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: var(--accent-glow);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+    }
+
+    .feature h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
+    .feature p { color: var(--muted); font-size: 0.9rem; }
+
+    /* Steps */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .step-num {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.75rem;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+
+    /* Code block */
+    .code-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin-top: 2rem;
+      overflow-x: auto;
+    }
+
+    .code-block code {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.85rem;
+      color: var(--accent);
+      white-space: pre;
+    }
+
+    /* Categories */
+    .categories {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 1.5rem;
+    }
+
+    .tag {
+      padding: 0.4rem 0.85rem;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    /* FAQ */
+    .faq-list { margin-top: 2rem; }
+
+    .faq-item {
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem 0;
+    }
+
+    .faq-item:last-child { border-bottom: none; }
+
+    .faq-item h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .faq-item p { color: var(--muted); font-size: 0.95rem; }
+
+    /* Final CTA */
+    .final-cta {
+      text-align: center;
+      padding: 5rem 0;
+      background: linear-gradient(180deg, var(--bg) 0%, var(--surface) 50%, var(--bg) 100%);
+    }
+
+    .final-cta h2 { margin-bottom: 0.75rem; }
+    .final-cta .lead { margin-inline: auto; margin-bottom: 2rem; }
+
+    .risk-reversal {
+      margin-top: 1.25rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem 0;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--accent); }
+
+    @media (max-width: 640px) {
+      .nav-links .hide-mobile { display: none; }
+      .hero { padding-top: 3rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <div class="container nav-inner">
+      <a class="brand" href="#">
+        <img src="assets/logo/logo-icon.svg" alt="" width="36" height="36">
+        Agent Skills
+      </a>
+      <div class="nav-links">
+        <a class="hide-mobile" href="#problem">Problem</a>
+        <a class="hide-mobile" href="#solution">Solution</a>
+        <a class="hide-mobile" href="#catalog">Catalog</a>
+        <a class="hide-mobile" href="#faq">FAQ</a>
+        <a class="btn btn-primary" href="https://github.com/luongnv89/skills">View on GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO (PAS opener) -->
+  <header class="hero">
+    <div class="container">
+      <div class="badge"><strong>40+ skills</strong> · MIT licensed · no lock-in</div>
+      <h1>Stop Rebuilding Agent Instructions</h1>
+      <p class="hero-sub">
+        Your AI coding agent forgets your standards between sessions.
+        Agent Skills gives you version-controlled workflows you install in one command —
+        code review, releases, testing, and more.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#install">Install My First Skill</a>
+        <a class="btn btn-secondary" href="https://github.com/luongnv89/skills#skill-catalog">Browse the Catalog</a>
+      </div>
+      <div class="trust-bar">
+        <span><span class="dot"></span> Claude Code · Cursor · Copilot · Codex</span>
+        <span><span class="dot"></span> Open source on GitHub</span>
+        <span><span class="dot"></span> Each skill stands alone</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- PROBLEM -->
+  <section id="problem">
+    <div class="container">
+      <div class="section-label">Problem</div>
+      <h2>Every session starts from scratch</h2>
+      <p class="lead">
+        You paste the same review checklist into chat. Your teammate uses a different prompt.
+        Three agents, three outputs — none of them match your team's bar.
+      </p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>Prompt drift</h3>
+          <p>You rewrite instructions in the chat box. Next week the wording changes and the output quality drops with it.</p>
+        </div>
+        <div class="card">
+          <h3>No shared standard</h3>
+          <p>Code review means one thing to you and another to the agent — unless the steps are written down somewhere durable.</p>
+        </div>
+        <div class="card">
+          <h3>Tool fragmentation</h3>
+          <p>Claude Code, Cursor, and Copilot each expect skills in different paths. You end up maintaining copies by hand.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AGITATE -->
+  <section id="agitate">
+    <div class="container">
+      <div class="section-label">Agitate</div>
+      <h2>Bad agent output compounds</h2>
+      <p class="lead">
+        A vague instruction does not just waste one reply. It ships the wrong pattern into your codebase and your team's habits.
+      </p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>Review gaps slip through</h3>
+          <p>Without a fixed checklist, security and edge-case checks get skipped when you are in a hurry.</p>
+        </div>
+        <div class="card">
+          <h3>Onboarding stays slow</h3>
+          <p>New contributors cannot reuse your agent workflows — they rebuild prompts from memory or old chat logs.</p>
+        </div>
+        <div class="card">
+          <h3>Context window tax</h3>
+          <p>Pasting long instructions every session burns tokens and still leaves out references, templates, and guardrails.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SOLUTION -->
+  <section id="solution">
+    <div class="container">
+      <div class="section-label">Solution</div>
+      <h2>Install a skill. Run the same workflow every time.</h2>
+      <p class="lead">
+        Agent Skills is a catalog of standalone, production-ready workflows.
+        Pick what you need. Install with one command. Nothing else required.
+      </p>
+      <div class="features">
+        <div class="feature">
+          <div class="feature-icon">◇</div>
+          <h3>Standalone by design</h3>
+          <p>Install code-review without pulling in a framework. Each skill is its own package with SKILL.md, references, and scripts.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">⚡</div>
+          <h3>One-command install</h3>
+          <p><code class="mono">npx skills add</code> or <code class="mono">asm install</code> — the installer maps files to Claude, Cursor, Copilot, and more.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">✓</div>
+          <h3>Built-in quality bars</h3>
+          <p>Skills ship with acceptance criteria, guardrails, and references — not one-off prompts that evaporate when the chat ends.</p>
+        </div>
+      </div>
+      <p style="margin-top: 2rem; color: var(--muted); font-size: 0.95rem;">
+        <strong style="color: var(--text);">Why it beats ad-hoc prompts:</strong>
+        version-controlled, shareable across your team, and structured for progressive disclosure so agents load only what the task needs.
+      </p>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section id="install">
+    <div class="container">
+      <div class="section-label">How it works</div>
+      <h2>Three steps to a repeatable agent workflow</h2>
+      <div class="steps">
+        <div class="card">
+          <div class="step-num">Step 01</div>
+          <h3>Browse the catalog</h3>
+          <p>Pick a skill by category — code quality, shipping, docs, frontend, tooling.</p>
+        </div>
+        <div class="card">
+          <div class="step-num">Step 02</div>
+          <h3>Install with one command</h3>
+          <p>Copy the install line for your tool. Global or project scope — your choice.</p>
+        </div>
+        <div class="card">
+          <div class="step-num">Step 03</div>
+          <h3>Invoke when the task fits</h3>
+          <p>The agent loads SKILL.md and follows the workflow — same steps, same output shape, every run.</p>
+        </div>
+      </div>
+      <div class="code-block" id="catalog">
+        <code>npx skills add https://github.com/luongnv89/skills --skill code-review</code>
+      </div>
+      <p style="margin-top: 1rem; color: var(--muted); font-size: 0.9rem;">
+        Install several at once: add <code class="mono">--skill auto-push --skill test-coverage</code> to the same command.
+      </p>
+      <a class="btn btn-primary" href="https://github.com/luongnv89/skills#install" style="margin-top: 1.5rem;">Get the Install Commands</a>
+    </div>
+  </section>
+
+  <!-- SOCIAL PROOF -->
+  <section id="proof">
+    <div class="container">
+      <div class="section-label">Social proof</div>
+      <h2>Built for developers who ship with agents</h2>
+      <p class="lead">
+        Open source, actively maintained, and designed to work across the tools you already use.
+      </p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>40+ skills</h3>
+          <p>From code review and test coverage to release management, PRDs, and SEO — each independently installable.</p>
+        </div>
+        <div class="card">
+          <h3>Multi-tool support</h3>
+          <p>Tested with Claude Code, Cursor, Windsurf, GitHub Copilot, OpenAI Codex, and OpenCode.</p>
+        </div>
+        <div class="card">
+          <h3>MIT licensed</h3>
+          <p>Use, fork, and contribute without license friction. PRs welcome.</p>
+        </div>
+      </div>
+      <p style="margin-top: 2rem; color: var(--muted); font-size: 0.9rem; font-style: italic;">
+        [proof needed — add user testimonial or download metric when available]
+      </p>
+    </div>
+  </section>
+
+  <!-- CATALOG PREVIEW -->
+  <section>
+    <div class="container">
+      <div class="section-label">Catalog</div>
+      <h2>Pick what you need today</h2>
+      <p class="lead">Eight categories. Install one skill or ten — they do not depend on each other.</p>
+      <div class="categories">
+        <span class="tag">Code Quality</span>
+        <span class="tag">Shipping</span>
+        <span class="tag">Product Planning</span>
+        <span class="tag">Frontend &amp; Design</span>
+        <span class="tag">Documentation</span>
+        <span class="tag">App Store</span>
+        <span class="tag">Food &amp; Cooking</span>
+        <span class="tag">Tooling</span>
+      </div>
+      <div class="features" style="margin-top: 2rem;">
+        <div class="feature">
+          <h3>code-review</h3>
+          <p>Structured reviews by severity using Code Smells and Pragmatic Programmer patterns.</p>
+        </div>
+        <div class="feature">
+          <h3>auto-push</h3>
+          <p>Stage, commit, and push with secret scanning and large-file detection.</p>
+        </div>
+        <div class="feature">
+          <h3>release-manager</h3>
+          <p>Version bump, changelog, tags, GitHub release, and package publish in one workflow.</p>
+        </div>
+        <div class="feature">
+          <h3>skill-creator</h3>
+          <p>Author, validate, and package your own skills to the same standard.</p>
+        </div>
+      </div>
+      <a class="btn btn-secondary" href="https://github.com/luongnv89/skills#skill-catalog" style="margin-top: 2rem;">View Full Catalog on GitHub</a>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq">
+    <div class="container">
+      <div class="section-label">FAQ</div>
+      <h2>Common questions</h2>
+      <div class="faq-list">
+        <div class="faq-item">
+          <h3>Do I need all the skills?</h3>
+          <p>No. Each skill is independent. Install only what your current project needs.</p>
+        </div>
+        <div class="faq-item">
+          <h3>Which AI tools are supported?</h3>
+          <p>Any agent tool that supports skills. The installer handles file paths for Claude Code, Cursor, Windsurf, Copilot, Codex, and OpenCode automatically.</p>
+        </div>
+        <div class="faq-item">
+          <h3>How is this different from a custom prompt?</h3>
+          <p>A skill is a structured workflow with references, templates, and quality checks — version-controlled and shareable. A prompt is a one-off instruction that lives in chat history.</p>
+        </div>
+        <div class="faq-item">
+          <h3>Does this affect my runtime code?</h3>
+          <p>No. Skills guide your agent during development. Nothing to deploy, no runtime dependencies in your app.</p>
+        </div>
+        <div class="faq-item">
+          <h3>Can I create my own skills?</h3>
+          <p>Yes. Use the skill-creator skill or follow the contributing guide. Same format, same validation tooling.</p>
+        </div>
+        <div class="faq-item">
+          <h3>Is it free?</h3>
+          <p>Yes. MIT licensed. Install, fork, and contribute at no cost.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <section class="final-cta">
+    <div class="container">
+      <h2>Install your first skill in 30 seconds</h2>
+      <p class="lead">No bundle. No framework. One command, one workflow, ready on your machine.</p>
+      <a class="btn btn-primary" href="https://github.com/luongnv89/skills#install">Start With code-review</a>
+      <p class="risk-reversal">MIT licensed · open source · works globally or per-project</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>
+        <a href="https://github.com/luongnv89/skills">GitHub</a> ·
+        <a href="https://github.com/luongnv89/skills/blob/main/CONTRIBUTING.md">Contribute</a> ·
+        <a href="https://github.com/luongnv89/skills/blob/main/LICENSE">MIT License</a>
+      </p>
+      <p style="margin-top: 0.75rem;">Agent Skills — ready-made workflows for AI coding agents</p>
+    </div>
+  </footer>
+
+</body>
+</html>
