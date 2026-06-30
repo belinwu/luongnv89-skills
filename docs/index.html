@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent Skills — Ready-made skills for AI coding agents</title>
-  <meta name="description" content="Install standalone agent skills with one command. Code review, releases, PRDs, and more. Works with Claude Code, Cursor, Copilot, and other tools. MIT licensed.">
+  <meta name="description" content="Agent Skills v1.14.0 — 50+ versioned workflows for AI coding agents. Browse the GitHub Pages catalog, install with one command. Claude Code, Cursor, Copilot, Codex. MIT licensed.">
   <link rel="icon" href="assets/logo/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -542,6 +542,7 @@
       <div class="nav-links">
         <a class="hide-mobile" href="#problem">Problem</a>
         <a class="hide-mobile" href="#solution">Solution</a>
+        <a class="hide-mobile" href="#whats-new">What's New</a>
         <a class="hide-mobile" href="#catalog">Catalog</a>
         <a class="hide-mobile" href="#faq">FAQ</a>
         <a class="btn btn-primary" href="https://github.com/luongnv89/skills">View on GitHub</a>
@@ -552,10 +553,10 @@
   <!-- HERO (PAS opener) -->
   <header class="hero">
     <div class="container">
-      <div class="badge"><strong>40+ skills</strong> · MIT licensed · no lock-in</div>
+      <div class="badge"><strong>v1.14.0</strong> · <strong>50+ skills</strong> · <a href="https://luongnv89.github.io/skills/" style="color: inherit; text-decoration: underline;">Live on GitHub Pages</a> · MIT</div>
       <h1>Stop Rebuilding Agent Skills</h1>
       <p class="hero-sub">
-        Your AI coding agent restarts from zero every session. Agent Skills gives you a catalog of standalone, versioned workflows. Install only what you need with one command. Your agent follows the same process every time.
+        Your AI coding agent restarts from zero every session. Agent Skills gives you a browsable catalog of standalone, versioned workflows — including this site from <code class="mono">docs/</code>. Install only what you need with one command. Your agent follows the same process every time.
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="#install">Install My First Skill</a>
@@ -677,9 +678,33 @@
         <code>npx skills add https://github.com/luongnv89/skills --skill code-review</code>
       </div>
       <p style="margin-top: 1rem; color: var(--muted); font-size: 0.9rem;">
-        Install several at once: add <code class="mono">--skill auto-push --skill test-coverage</code> to the same command.
+        Install several at once: add <code class="mono">--skill security-setup --skill clean-code</code> or <code class="mono">--skill website-cloner</code>. Tagged release: <a href="https://github.com/luongnv89/skills/releases/tag/v1.14.0">v1.14.0</a>.
       </p>
       <a class="btn btn-primary" href="https://github.com/luongnv89/skills#install" style="margin-top: 1.5rem;">Get the Install Commands</a>
+    </div>
+  </section>
+
+  <!-- WHAT'S NEW -->
+  <section id="whats-new">
+    <div class="container">
+      <div class="section-label">Release</div>
+      <h2>What's new in v1.14.0</h2>
+      <p class="lead">Catalog growth, a public GitHub Pages home, and suite-aware installers.</p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>GitHub Pages home</h3>
+          <p>Marketing site built from <code class="mono">docs/</code> and deployed on every push to <code class="mono">main</code>.</p>
+        </div>
+        <div class="card">
+          <h3>New &amp; expanded skills</h3>
+          <p>security-setup, clean-code, subagent-creator, viral-product-evaluator, tmux-agent-comms, and the website-cloner suite.</p>
+        </div>
+        <div class="card">
+          <h3>Install &amp; release tooling</h3>
+          <p>Suite-aware <code class="mono">install.sh</code> / <code class="mono">remote-install.sh</code>; release-manager landing-page updates for future releases.</p>
+        </div>
+      </div>
+      <a class="btn btn-secondary" href="https://github.com/luongnv89/skills/releases/tag/v1.14.0" style="margin-top: 2rem;">Full release notes on GitHub</a>
     </div>
   </section>
 
@@ -693,8 +718,8 @@
       </p>
       <div class="grid-3">
         <div class="card">
-          <h3>40+ skills</h3>
-          <p>Code review, release automation, PRDs, architecture, SEO, design tools — each installs on its own.</p>
+          <h3>50+ skills</h3>
+          <p>Code review, security-setup, clean-code, release automation, website-cloner suite, PRDs — each installs on its own.</p>
         </div>
         <div class="card">
           <h3>Multi-tool support</h3>
@@ -705,8 +730,8 @@
           <p>Free to use, inspect, fork, and contribute. No strings attached.</p>
         </div>
       </div>
-      <p style="margin-top: 2rem; color: var(--muted); font-size: 0.9rem; font-style: italic;">
-        [proof needed — add user testimonial or adoption metric when available]
+      <p style="margin-top: 2rem; color: var(--muted); font-size: 0.9rem;">
+        Catalog <strong>v1.14.0</strong> — GitHub Pages home, suite-aware installers, and new skills since v1.13.0.
       </p>
     </div>
   </section>
@@ -716,7 +741,7 @@
     <div class="container">
       <div class="section-label">Catalog</div>
       <h2>Pick what you need today</h2>
-      <p class="lead">Eight categories. Install one skill or ten. They stand alone.</p>
+      <p class="lead">Eight categories — plus multi-phase suites like website-cloner. Install one skill or ten. They stand alone.</p>
       <div class="categories">
         <span class="tag">Code Quality</span>
         <span class="tag">Shipping</span>
@@ -724,7 +749,6 @@
         <span class="tag">Frontend &amp; Design</span>
         <span class="tag">Documentation</span>
         <span class="tag">App Store</span>
-        <span class="tag">Food &amp; Cooking</span>
         <span class="tag">Tooling</span>
       </div>
       <div class="features" style="margin-top: 2rem;">
@@ -743,6 +767,18 @@
         <div class="feature">
           <h3>skill-creator</h3>
           <p>Author, validate, and package your own skills to the same standard.</p>
+        </div>
+        <div class="feature">
+          <h3>security-setup</h3>
+          <p>Local pre-commit secrets, dependency scans, and static analysis with gated CI.</p>
+        </div>
+        <div class="feature">
+          <h3>clean-code</h3>
+          <p>bbv Clean Code audit with phased plan and optional HTML report.</p>
+        </div>
+        <div class="feature">
+          <h3>website-cloner</h3>
+          <p>Six-phase orchestrator to analyze, plan, and rebuild an improved site.</p>
         </div>
       </div>
       <a class="btn btn-secondary" href="https://github.com/luongnv89/skills#skill-catalog" style="margin-top: 2rem;">View Full Catalog on GitHub</a>
@@ -787,7 +823,7 @@
   <section class="final-cta">
     <div class="container">
       <h2>Install your first skill in under a minute</h2>
-      <p class="lead">No bundle. No framework. One command puts a complete workflow on your machine.</p>
+      <p class="lead">Catalog v1.14.0 — no bundle, no framework. One command puts a complete workflow on your machine.</p>
       <a class="btn btn-primary" href="https://github.com/luongnv89/skills#install">Install code-review</a>
       <p class="risk-reversal">MIT licensed · open source · global or per-project scope</p>
     </div>
@@ -797,6 +833,7 @@
     <div class="container">
       <p>
         <a href="https://github.com/luongnv89/skills">GitHub</a> ·
+        <a href="https://github.com/luongnv89/skills/releases/tag/v1.14.0">v1.14.0</a> ·
         <a href="https://github.com/luongnv89/skills/blob/main/CONTRIBUTING.md">Contribute</a> ·
         <a href="https://github.com/luongnv89/skills/blob/main/LICENSE">MIT License</a>
       </p>

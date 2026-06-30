@@ -185,7 +185,7 @@ npx skills add https://github.com/luongnv89/skills --skill <name>
 | [**logo-designer**](skills/logo-designer/) | 1.2.1 | medium | 7 SVG logo variants from project context |
 | [**excalidraw-generator**](skills/excalidraw-generator/) | 1.3.0 | high | Diagrams as Excalidraw JSON (flow, C4, ER, etc.) |
 | [**drawio-generator**](skills/drawio-generator/) | 1.2.0 | high | Diagrams as draw.io XML with C4 support |
-| [**website-cloner**](skills/website-cloner/) | 1.1.1 | high | 6-phase URL to improved Vite/React/Tailwind site |
+| [**website-cloner**](skills/website-cloner/) | 1.1.5 | high | 6-phase URL to improved Vite/React/Tailwind site |
 
 **Website cloner phases** (install individually or as suite):
 
@@ -204,6 +204,7 @@ npx skills add https://github.com/luongnv89/skills --skill <name>
 |---|---|---|---|
 | [**docs-generator**](skills/docs-generator/) | 1.2.3 | low | Restructure docs into clear hierarchy |
 | [**readme-to-landing-page**](skills/readme-to-landing-page/) | 2.1.0 | high | Turn README into scannable landing page (PAS/AIDA/StoryBrand) |
+| [**landing-page-generator**](skills/landing-page-generator/) | 1.1.3 | high | Conversion-focused landing copy (PAS, AIDA, StoryBrand) |
 | [**seo-ai-optimizer**](skills/seo-ai-optimizer/) | 1.2.0 | high | Technical SEO + AI-bot directives |
 | [**oss-ready**](skills/oss-ready/) | 1.2.0 | low | Add OSS files and templates |
 | [**agent-config**](skills/agent-config/) | 1.3.0 | medium | CLAUDE.md + AGENTS.md per best practices |
