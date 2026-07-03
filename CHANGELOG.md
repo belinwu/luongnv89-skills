@@ -3,9 +3,20 @@
 
 ## Unreleased
 
-(Nothing yet.)
+### New Skills
+| Skill | Version |
+|-------|---------|
+| fork-upstream-sync | 1.0.3 |
 
-## v1.14.0 — 2026-06-30
+### Skills Updated
+| Skill | Version Change |
+|-------|----------------|
+| tmux-agent-comms | 1.3.0 → 1.8.1 (observability + terminal option) |
+
+### Other
+- **chore(skills)**: trim SKILL.md files under 500-line limit (#67)
+
+## v1.15.0 — 2026-07-03
 
 ### New Skills
 | Skill | Version |
@@ -68,7 +79,7 @@
 ### Other
 - **agent-config / catalog**: Added root `CLAUDE.md` and `AGENTS.md` for the skills repo (0cf2ea7).
 
-**Full Changelog**: https://github.com/luongnv89/skills/compare/v1.13.0...v1.14.0
+**Full Changelog**: https://github.com/luongnv89/skills/compare/v1.14.0...v1.15.0
 ## v1.13.0 — 2026-04-28
 
 ### Skills Updated
