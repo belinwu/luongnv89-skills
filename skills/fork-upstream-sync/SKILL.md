@@ -4,7 +4,7 @@ description: "Sync a GitHub fork with upstream while keeping unmerged feature br
 license: MIT
 effort: medium
 metadata:
-  version: 1.0.1
+  version: 1.0.3
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 
@@ -34,7 +34,15 @@ git fetch upstream
 git fetch origin
 ```
 
-If the working tree is dirty, stash first, sync, then pop the stash.
+If the working tree is dirty:
+
+```bash
+git stash push -u -m "pre-sync: $(git rev-parse --abbrev-ref HEAD)"
+# ...run the fetch/rebase/reset steps for the chosen path...
+git stash pop
+```
+
+On `git stash pop` conflict, stop — the stash is preserved (`git stash list`); resolve manually before continuing.
 
 If `upstream` is missing, `origin` is missing, or the user has not said which upstream org/repo to use, stop and ask. Never force-push `main` without `--force-with-lease`.
 
@@ -57,7 +65,7 @@ After each major phase, emit a short report with checks for upstream remote, com
 
 1. Identify PR head branch and upstream base (`main`).
 2. `git checkout <feature-branch>` then `git rebase upstream/main`.
-3. On each conflict, resolve files. When upstream and your feature both added valid code, keep **both** (union), not either/or.
+3. On each conflict, resolve files. When upstream and your feature both added valid code, keep **both** (union), not either/or. If a conflict can't be confidently resolved, `git rebase --abort` and stop to ask the user rather than guessing.
 4. `git add` resolved files, then `GIT_EDITOR=true git rebase --continue`.
 5. For locale JSON conflicts, keep the rebased side then run the repo catalog fix if documented (for example `pnpm run sync:localization-catalog --fix`).
 6. `git push origin <feature-branch> --force-with-lease`.
@@ -74,9 +82,10 @@ After Path B:
 ```bash
 git checkout main
 git reset --hard upstream/main
-git merge --ff-only <feature-branch>
-git push origin main --force-with-lease
+git merge --ff-only <feature-branch> && git push origin main --force-with-lease
 ```
+
+If `--ff-only` fails, `main` is already reset to bare `upstream/main` — **do not push**. The feature branch is behind the new `upstream/main`; re-run Path B to rebase it, then retry this merge. Pushing here without the fast-forward would force-publish plain `upstream/main`, silently dropping your integration WIP from `origin/main`.
 
 **Done when:** `upstream/main` is ancestor of `main`, `main` SHA equals feature branch SHA, and ahead count matches your feature commits.
 
@@ -104,9 +113,10 @@ git fetch upstream origin
 git checkout <feature-branch> && git rebase upstream/main
 git push origin <feature-branch> --force-with-lease
 git checkout main && git reset --hard upstream/main
-git merge --ff-only <feature-branch>
-git push origin main --force-with-lease
+git merge --ff-only <feature-branch> && git push origin main --force-with-lease
 ```
+
+If `--ff-only` fails, do not push — re-run the rebase step against the current `upstream/main`, then retry.
 
 ## What not to do
 
