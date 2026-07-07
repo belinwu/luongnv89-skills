@@ -5,7 +5,7 @@ Screenshot Pre-processor for UI Review
 Analyzes screenshot images and produces a structured report that a UI reviewer
 agent can consume without needing to process raw images at runtime.
 
-Uses only Pillow, OpenCV, and scikit-image (no OCR, no external APIs).
+Uses only Pillow, OpenCV, and NumPy (no OCR, no external APIs).
 
 Usage:
     python process_screenshots.py <path1> [path2 ...] [--json] [--markdown]
@@ -17,21 +17,19 @@ Output:
     Both formats are always produced; --json writes to stdout, --markdown to stderr.
 
 Dependencies:
-    Pillow, opencv-python, scikit-image (all available in the skills environment)
+    Pillow, opencv-python, numpy (all available in the skills environment)
 """
 
 import sys
-import os
 import json
 import argparse
-import hashlib
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 import cv2
 import numpy as np
-from PIL import Image, ImageStat
+from PIL import Image
 
 
 # ── Supported formats ────────────────────────────────────────────────
@@ -42,9 +40,11 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (well above GitHub's 10 MB limit)
 
 # ── Data classes ─────────────────────────────────────────────────────
 
+
 @dataclass
 class Region:
     """A detected visual region in the screenshot."""
+
     label: str
     x: int
     y: int
@@ -57,6 +57,7 @@ class Region:
 @dataclass
 class ColorPalette:
     """Dominant colors extracted from the image."""
+
     primary: str  # hex
     secondary: str  # hex
     accent: str  # hex
@@ -68,6 +69,7 @@ class ColorPalette:
 @dataclass
 class ScreenshotAnalysis:
     """Complete analysis of a single screenshot."""
+
     filename: str
     file_size_bytes: int
     format: str
@@ -85,6 +87,7 @@ class ScreenshotAnalysis:
 
 
 # ── Validation ───────────────────────────────────────────────────────
+
 
 def validate_image(path: Path) -> Optional[str]:
     """Return an error string if the image is invalid, else None."""
@@ -108,6 +111,7 @@ def validate_image(path: Path) -> Optional[str]:
 
 # ── Metadata extraction ─────────────────────────────────────────────
 
+
 def extract_metadata(path: Path) -> dict:
     """Extract basic image metadata."""
     with Image.open(path) as img:
@@ -126,12 +130,18 @@ def extract_metadata(path: Path) -> dict:
 
 # ── Color palette ────────────────────────────────────────────────────
 
+
 def extract_color_palette(path: Path) -> ColorPalette:
     """Extract dominant colors using k-means-like clustering via OpenCV."""
     img = cv2.imread(str(path))
     if img is None:
-        return ColorPalette(primary="#000000", secondary="#000000", accent="#000000",
-                            background="#ffffff", text="#000000")
+        return ColorPalette(
+            primary="#000000",
+            secondary="#000000",
+            accent="#000000",
+            background="#ffffff",
+            text="#000000",
+        )
 
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     pixels = img.reshape(-1, 3).astype(np.float32)
@@ -140,7 +150,9 @@ def extract_color_palette(path: Path) -> ColorPalette:
     num_colors = 8
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
     flags = cv2.KMEANS_RANDOM_CENTERS
-    compactness, labels, centers = cv2.kmeans(pixels, num_colors, None, criteria, 10, flags)
+    compactness, labels, centers = cv2.kmeans(
+        pixels, num_colors, None, criteria, 10, flags
+    )
 
     # Sort by frequency
     unique, counts = np.unique(labels, return_counts=True)
@@ -200,6 +212,7 @@ def _find_text_color(img):
 
 # ── Layout analysis ─────────────────────────────────────────────────
 
+
 def analyze_layout(img_path: Path) -> tuple[list[Region], str]:
     """Detect visual regions and produce a layout summary."""
     img = cv2.imread(str(img_path))
@@ -242,7 +255,7 @@ def _detect_nav_bars(img, w, h) -> list[Region]:
     """Detect navigation bars near the top of the image."""
     regions = []
     # Analyze the top 15% of the image
-    top_region = img[int(h * 0.0):int(h * 0.15), :]
+    top_region = img[int(h * 0.0) : int(h * 0.15), :]
     if top_region.size == 0:
         return regions
 
@@ -252,12 +265,17 @@ def _detect_nav_bars(img, w, h) -> list[Region]:
 
     # If the top strip has low standard deviation, it's likely a nav bar
     if std_dev < 40:
-        regions.append(Region(
-            label="navigation_bar",
-            x=0, y=0, width=w, height=int(h * 0.15),
-            confidence=min(1.0, (40 - std_dev) / 20),
-            description=f"Top navigation bar (height ~{int(h * 0.15)}px, bg: {mean_color_to_hex(mean_color)})"
-        ))
+        regions.append(
+            Region(
+                label="navigation_bar",
+                x=0,
+                y=0,
+                width=w,
+                height=int(h * 0.15),
+                confidence=min(1.0, (40 - std_dev) / 20),
+                description=f"Top navigation bar (height ~{int(h * 0.15)}px, bg: {mean_color_to_hex(mean_color)})",
+            )
+        )
 
     return regions
 
@@ -286,16 +304,21 @@ def _detect_buttons(img, w, h) -> list[Region]:
         # Buttons are typically wider than tall, with moderate size
         if 0.5 < cw / max(ch, 1) < 4 and 2000 < area < w * h * 0.1:
             # Check if this region has a distinct color from surroundings
-            roi = img[y:y+ch, x:x+cw]
+            roi = img[y : y + ch, x : x + cw]
             roi_std = np.std(roi)
             if roi_std > 20:  # Has some color variation (text or icon inside)
                 confidence = min(1.0, area / 10000)
-                regions.append(Region(
-                    label="button",
-                    x=x, y=y, width=cw, height=ch,
-                    confidence=round(confidence, 2),
-                    description=f"Button-like element at ({x},{y}) {cw}x{ch}px"
-                ))
+                regions.append(
+                    Region(
+                        label="button",
+                        x=x,
+                        y=y,
+                        width=cw,
+                        height=ch,
+                        confidence=round(confidence, 2),
+                        description=f"Button-like element at ({x},{y}) {cw}x{ch}px",
+                    )
+                )
                 button_count += 1
                 if button_count >= 20:  # Cap to avoid noise
                     break
@@ -324,16 +347,21 @@ def _detect_image_regions(img, w, h) -> list[Region]:
 
         # Images are typically rectangular with aspect ratio between 0.5 and 3
         if 0.5 < aspect < 3 and area > 5000:
-            roi = img[y:y+ch, x:x+cw]
+            roi = img[y : y + ch, x : x + cw]
             roi_std = np.std(roi.astype(np.float32))
             # Image placeholders tend to have moderate std dev
             if 15 < roi_std < 80:
-                regions.append(Region(
-                    label="image_placeholder",
-                    x=x, y=y, width=cw, height=ch,
-                    confidence=round(min(1.0, roi_std / 50), 2),
-                    description=f"Image/media placeholder at ({x},{y}) {cw}x{ch}px"
-                ))
+                regions.append(
+                    Region(
+                        label="image_placeholder",
+                        x=x,
+                        y=y,
+                        width=cw,
+                        height=ch,
+                        confidence=round(min(1.0, roi_std / 50), 2),
+                        description=f"Image/media placeholder at ({x},{y}) {cw}x{ch}px",
+                    )
+                )
 
     return regions
 
@@ -362,18 +390,23 @@ def _detect_text_blocks(img, w, h) -> list[Region]:
             if density > 0.15:  # High edge density = likely text
                 text_block_count += 1
 
-    return [Region(
-        label="text_region",
-        x=0, y=0, width=w, height=h,
-        confidence=0.7,
-        description=f"Estimated {text_block_count} text-containing regions across the layout"
-    )]
+    return [
+        Region(
+            label="text_region",
+            x=0,
+            y=0,
+            width=w,
+            height=h,
+            confidence=0.7,
+            description=f"Estimated {text_block_count} text-containing regions across the layout",
+        )
+    ]
 
 
 def _detect_footer(img, w, h) -> list[Region]:
     """Detect footer areas at the bottom of the image."""
     regions = []
-    bottom_region = img[int(h * 0.85):, :]
+    bottom_region = img[int(h * 0.85) :, :]
     if bottom_region.size == 0:
         return regions
 
@@ -381,12 +414,17 @@ def _detect_footer(img, w, h) -> list[Region]:
     mean_color = np.mean(bottom_region, axis=(0, 1))
 
     if std_dev < 50:
-        regions.append(Region(
-            label="footer",
-            x=0, y=int(h * 0.85), width=w, height=int(h * 0.15),
-            confidence=min(1.0, (50 - std_dev) / 25),
-            description=f"Potential footer area (height ~{int(h * 0.15)}px, bg: {mean_color_to_hex(mean_color)})"
-        ))
+        regions.append(
+            Region(
+                label="footer",
+                x=0,
+                y=int(h * 0.85),
+                width=w,
+                height=int(h * 0.15),
+                confidence=min(1.0, (50 - std_dev) / 25),
+                description=f"Potential footer area (height ~{int(h * 0.15)}px, bg: {mean_color_to_hex(mean_color)})",
+            )
+        )
 
     return regions
 
@@ -428,10 +466,15 @@ def _build_layout_summary(regions: list[Region], w: int, h: int) -> str:
         text = by_label["text_region"][0]
         parts.append(text.description)
 
-    return "; ".join(parts) if parts else "Layout detected but no standard UI elements identified"
+    return (
+        "; ".join(parts)
+        if parts
+        else "Layout detected but no standard UI elements identified"
+    )
 
 
 # ── Visual density ───────────────────────────────────────────────────
+
 
 def estimate_visual_density(img_path: Path) -> str:
     """Estimate how visually dense the screenshot is (low/medium/high)."""
@@ -453,6 +496,7 @@ def estimate_visual_density(img_path: Path) -> str:
 
 # ── Quality assessment ──────────────────────────────────────────────
 
+
 def assess_quality(img_path: Path) -> tuple[float, list[str]]:
     """Assess screenshot quality and return (score, warnings)."""
     img = cv2.imread(str(img_path))
@@ -471,7 +515,9 @@ def assess_quality(img_path: Path) -> tuple[float, list[str]]:
 
     if w > 3840 or h > 2160:
         score -= 0.1
-        warnings.append(f"Very high resolution: {w}x{h} — may be unnecessarily detailed")
+        warnings.append(
+            f"Very high resolution: {w}x{h} — may be unnecessarily detailed"
+        )
 
     # Check for blur (Laplacian variance)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -494,6 +540,7 @@ def assess_quality(img_path: Path) -> tuple[float, list[str]]:
 
 
 # ── Main pipeline ───────────────────────────────────────────────────
+
 
 def analyze_single(path: Path) -> ScreenshotAnalysis:
     """Run the full analysis pipeline on a single image."""
@@ -557,7 +604,9 @@ def build_report(analyses: list[ScreenshotAnalysis]) -> dict:
         "tool": "process_screenshots",
         "image_count": len(analyses),
         "total_size_bytes": sum(a.file_size_bytes for a in analyses),
-        "average_quality": round(sum(a.quality_score for a in analyses) / max(len(analyses), 1), 2),
+        "average_quality": round(
+            sum(a.quality_score for a in analyses) / max(len(analyses), 1), 2
+        ),
         "images": [asdict(a) for a in analyses],
     }
 
@@ -578,8 +627,8 @@ def format_markdown(report: dict) -> str:
     for img in report["images"]:
         lines.append(f"## {img['filename']}")
         lines.append("")
-        lines.append(f"| Property | Value |")
-        lines.append(f"|---|---|")
+        lines.append("| Property | Value |")
+        lines.append("|---|---|")
         lines.append(f"| Format | {img['format']} |")
         lines.append(f"| Dimensions | {img['width']} × {img['height']} px |")
         lines.append(f"| Aspect Ratio | {img['aspect_ratio']} |")
@@ -587,15 +636,17 @@ def format_markdown(report: dict) -> str:
         lines.append(f"| Visual Density | {img['visual_density']} |")
         lines.append(f"| Quality Score | {img['quality_score']}/1.0 |")
         lines.append(f"| Text Regions | ~{img['text_regions_estimated']} |")
-        lines.append(f"| Interactive Elements | ~{img['interactive_elements_estimated']} |")
+        lines.append(
+            f"| Interactive Elements | ~{img['interactive_elements_estimated']} |"
+        )
         lines.append("")
 
         if img.get("color_palette"):
             cp = img["color_palette"]
             lines.append("### Color Palette")
             lines.append("")
-            lines.append(f"| Role | Color |")
-            lines.append(f"|---|---|")
+            lines.append("| Role | Color |")
+            lines.append("|---|---|")
             lines.append(f"| Primary | `{cp['primary']}` |")
             lines.append(f"| Secondary | `{cp['secondary']}` |")
             lines.append(f"| Accent | `{cp['accent']}` |")
@@ -611,8 +662,8 @@ def format_markdown(report: dict) -> str:
         if img["regions"]:
             lines.append("### Detected Regions")
             lines.append("")
-            lines.append(f"| Type | Position | Size | Confidence | Description |")
-            lines.append(f"|---|---|---|---|---|")
+            lines.append("| Type | Position | Size | Confidence | Description |")
+            lines.append("|---|---|---|---|---|")
             for r in img["regions"]:
                 lines.append(
                     f"| {r['label']} | ({r['x']}, {r['y']}) | "
@@ -635,22 +686,37 @@ def format_markdown(report: dict) -> str:
 
 # ── CLI entry point ─────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Screenshot pre-processor for UI review — analyzes images and produces structured reports.",
         epilog="Example: python process_screenshots.py screenshot1.png screenshot2.png --json",
     )
-    parser.add_argument("paths", nargs="+", help="Image files or directories to analyze")
-    parser.add_argument("--recursive", "-r", action="store_true",
-                        help="Recurse into directories")
-    parser.add_argument("--json", "-j", action="store_true", dest="output_json",
-                        help="Output JSON report to stdout (default when piping)")
-    parser.add_argument("--markdown", "-m", action="store_true",
-                        help="Output markdown report to stderr")
-    parser.add_argument("--output", "-o", type=str,
-                        help="Write markdown report to file instead of stderr")
-    parser.add_argument("--quiet", "-q", action="store_true",
-                        help="Suppress progress output")
+    parser.add_argument(
+        "paths", nargs="+", help="Image files or directories to analyze"
+    )
+    parser.add_argument(
+        "--recursive", "-r", action="store_true", help="Recurse into directories"
+    )
+    parser.add_argument(
+        "--json",
+        "-j",
+        action="store_true",
+        dest="output_json",
+        help="Output JSON report to stdout (default when piping)",
+    )
+    parser.add_argument(
+        "--markdown", "-m", action="store_true", help="Output markdown report to stderr"
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        help="Write markdown report to file instead of stderr",
+    )
+    parser.add_argument(
+        "--quiet", "-q", action="store_true", help="Suppress progress output"
+    )
 
     args = parser.parse_args()
 
@@ -673,7 +739,10 @@ def main():
 
     for i, img_path in enumerate(image_paths, 1):
         if not args.quiet:
-            print(f"  [{i}/{len(image_paths)}] Analyzing {img_path.name}...", file=sys.stderr)
+            print(
+                f"  [{i}/{len(image_paths)}] Analyzing {img_path.name}...",
+                file=sys.stderr,
+            )
 
         error = validate_image(img_path)
         if error:
@@ -710,15 +779,18 @@ def main():
 
     # Summary
     if not args.quiet:
-        print(f"\n◆ Analysis Complete", file=sys.stderr)
-        print(f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", file=sys.stderr)
+        print("\n◆ Analysis Complete", file=sys.stderr)
+        print("┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", file=sys.stderr)
         print(f"  Analyzed:    {len(analyses)} image(s)", file=sys.stderr)
         if errors:
             print(f"  Errors:      {len(errors)} (see above)", file=sys.stderr)
-        print(f"  Total size:  {report['total_size_bytes'] / 1024:.0f} KB", file=sys.stderr)
+        print(
+            f"  Total size:  {report['total_size_bytes'] / 1024:.0f} KB",
+            file=sys.stderr,
+        )
         print(f"  Avg quality: {report['average_quality']}/1.0", file=sys.stderr)
-        print(f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", file=sys.stderr)
-        print(f"  Result:      DONE", file=sys.stderr)
+        print("┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄", file=sys.stderr)
+        print("  Result:      DONE", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -87,6 +87,5 @@ PNG, JPG/JPEG, GIF, WEBP, BMP, TIFF. Max file size: 50 MB.
 - Pillow 12.x
 - OpenCV 4.x
 - NumPy
-- scikit-image
 
 All are available in the skills environment. No external APIs or OCR engines required.
