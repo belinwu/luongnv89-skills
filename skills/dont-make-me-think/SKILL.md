@@ -1,10 +1,10 @@
 ---
 name: dont-make-me-think
-description: "Review UI for usability using Steve Krug's principles; produce a scannable report. Use for usability audits, UX review, or UI feedback on screenshots, URLs, or code. Don't use for brand design critique, WCAG audits, or backend/API review."
+description: "Review UI for usability issues using Steve Krug's principles and produce a scannable report. Use when asked for a usability audit, UX review, or UI feedback on screenshots, URLs, or code. Don't use for visual/brand design critique, accessibility (WCAG) audits, or backend/API review."
 license: MIT
 effort: medium
 metadata:
-  version: 1.2.3
+  version: 1.3.0
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 
@@ -12,7 +12,9 @@ metadata:
 
 Evaluate and improve UIs through Steve Krug's "Don't Make Me Think" principles. The report itself must practice what Krug preaches: scannable, visual, zero fluff. A human should skim it in 30 seconds; an AI agent should be able to parse it and start fixing.
 
-Triggers and exclusions are set by the frontmatter `description` above. Accepted inputs are listed in Input Handling below.
+## When to Use
+
+Trigger this skill when the user asks for a usability audit, UX review, or UI feedback on a screenshot, live URL, or HTML/CSS code. Do not use for visual/brand critique, WCAG accessibility audits, or backend/API review — route those elsewhere.
 
 ## Instructions
 
@@ -30,11 +32,33 @@ Follow this workflow to keep the agent's context budget tight:
 - **Input available**: one of — live URL, screenshot/image, HTML/CSS code, wireframe, or verbal description
 - **Code editor access** (Redesign Mode only): write permission to the UI source files being modified
 
-## Input Handling
+## Screenshot Pre-processing
+
+When the input is a screenshot (image file), run the pre-processing script **before** visual analysis. This produces a structured report the agent can consume without generating image-processing code at runtime.
+
+```bash
+python3 scripts/process_screenshots.py <image_path> [--recursive]
+```
+
+Output: JSON to stdout (structured data), markdown to stderr (human-readable). Both are always produced.
+
+The script extracts:
+- **Metadata**: dimensions, format, file size, aspect ratio
+- **Color palette**: dominant colors (primary, secondary, accent, background, text)
+- **Layout regions**: navigation bars, buttons, image placeholders, text blocks, footers
+- **Visual density**: low / medium / high (Laplacian variance)
+- **Quality score**: 0.0–1.0 (blur, compression artifacts, resolution)
+- **Warnings**: issues that may affect review accuracy
+
+Use the JSON output (stdout) to populate the review with factual data. Use the markdown output (stderr) for quick human verification.
+
+If the script fails or the image is invalid, fall back to visual analysis and note the failure.
+
+### Input Handling
 
 | Input type | Action |
 |---|---|
-| Screenshot/image | Analyze visually |
+| Screenshot/image | Pre-process with `scripts/process_screenshots.py`, then analyze visually |
 | Live URL | Use `/browse` to navigate, screenshot, interact |
 | HTML/CSS/JS code | Read code, focus on user experience |
 | Wireframe/mockup | Focus on information architecture, not polish |
@@ -192,6 +216,7 @@ If working with code, edit files directly only after confirmation. For screensho
 | Situation | Action |
 |---|---|
 | `/browse` fails or URL is unreachable | Ask user for a screenshot or HTML export; do not proceed with assumptions |
+| Screenshot pre-processing fails | Fall back to visual analysis; note the failure in the review |
 | Screenshot cannot be loaded or parsed | Ask user to re-share as PNG/JPEG or paste the relevant HTML |
 | HTML/CSS code is incomplete | Note missing sections in the review; evaluate only what is present |
 | No input provided | Ask for one of: URL, screenshot, code snippet, or verbal description before starting |
@@ -220,6 +245,8 @@ Thinking Cost: HIGH — 3 critical issues found (disabled button, missing nav la
 | User wants "just a quick check" | Deliver a condensed review (top 3 issues only) rather than the full 10-lens report |
 | Redesign Mode on a CSS framework (Tailwind, Bootstrap) | Preserve the framework classes; only change values, not the framework itself |
 | UI has no issues | Output the scorecard with high scores and a "What Works" section only; do not fabricate problems |
+| Multiple screenshots provided | Pre-process each with the script; run batch analysis (`--recursive` if directory) |
+| Screenshot is very large (>4K) | Note in the review that detail may be excessive; consider recommending downscaled reference |
 
 ## Acceptance Criteria
 
