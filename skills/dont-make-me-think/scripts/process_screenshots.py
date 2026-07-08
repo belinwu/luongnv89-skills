@@ -537,8 +537,9 @@ def assess_quality(img_path: Path) -> tuple[float, list[str]]:
 
     # Check for excessive compression artifacts
     # Only run on lossy formats — re-encoding a lossless PNG as JPEG always introduces artifacts
-    meta = extract_metadata(path)
-    if meta["format"].lower() in ("jpeg", "jpg", "webp"):
+    with Image.open(img_path) as img_for_fmt:
+        fmt = img_for_fmt.format or "unknown"
+    if fmt.lower() in ("jpeg", "jpg", "webp"):
         _, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         original = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if original is not None:
@@ -625,15 +626,6 @@ def collect_images(paths: list[str], recursive: bool = False) -> list[Path]:
             unique.append(img)
     # Store missing paths for reporting (attached to the returned list as metadata)
     unique._missing = missing  # type: ignore[attr-defined]
-    return sorted(unique)
-    # Deduplicate by absolute path
-    seen = set()
-    unique = []
-    for img in images:
-        abs_path = img.resolve()
-        if abs_path not in seen:
-            seen.add(abs_path)
-            unique.append(img)
     return sorted(unique)
 
 
@@ -766,12 +758,11 @@ def main():
 
     image_paths = collect_images(args.paths, recursive=args.recursive)
 
+    # Check for missing paths before validation
+    missing_paths = getattr(image_paths, "_missing", None)
     if not image_paths:
-        if errors:
-            for path, err in errors:
-                print(f"✗ {path}: {err}", file=sys.stderr)
-        elif getattr(image_paths, "_missing", None):
-            for path in image_paths._missing:
+        if missing_paths:
+            for path in missing_paths:
                 print(f"✗ Path not found: {path}", file=sys.stderr)
         else:
             print("○ No supported images found.", file=sys.stderr)
