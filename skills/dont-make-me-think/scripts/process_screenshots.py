@@ -147,7 +147,16 @@ def extract_color_palette(path: Path) -> ColorPalette:
     pixels = img.reshape(-1, 3).astype(np.float32)
 
     # Use k-means to find dominant colors
-    num_colors = 8
+    # Clamp num_colors to available pixels to avoid OpenCV k-means crash on small images
+    num_colors = min(8, len(pixels))
+    if num_colors == 0:
+        return ColorPalette(
+            primary="#000000",
+            secondary="#000000",
+            accent="#000000",
+            background="#ffffff",
+            text="#000000",
+        )
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
     flags = cv2.KMEANS_RANDOM_CENTERS
     compactness, labels, centers = cv2.kmeans(
@@ -527,14 +536,17 @@ def assess_quality(img_path: Path) -> tuple[float, list[str]]:
         warnings.append("Image appears blurry or very smooth — low detail")
 
     # Check for excessive compression artifacts
-    _, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-    original = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
-    if original is not None:
-        diff = cv2.absdiff(img, original)
-        artifact_ratio = np.count_nonzero(diff) / (w * h * 3)
-        if artifact_ratio > 0.05:
-            score -= 0.2
-            warnings.append("Significant compression artifacts detected")
+    # Only run on lossy formats — re-encoding a lossless PNG as JPEG always introduces artifacts
+    meta = extract_metadata(path)
+    if meta["format"].lower() in ("jpeg", "jpg", "webp"):
+        _, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        original = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        if original is not None:
+            diff = cv2.absdiff(img, original)
+            artifact_ratio = np.count_nonzero(diff) / (w * h * 3)
+            if artifact_ratio > 0.05:
+                score -= 0.2
+                warnings.append("Significant compression artifacts detected")
 
     return round(max(0.0, min(1.0, score)), 2), warnings
 
@@ -553,7 +565,21 @@ def analyze_single(path: Path) -> ScreenshotAnalysis:
 
     # Estimate counts from regions
     btn_count = sum(1 for r in regions if r.label == "button")
-    text_count = sum(1 for r in regions if r.label == "text_region")
+    # Extract text region count from the composite text_region description
+    text_count = 0
+    for r in regions:
+        if r.label == "text_region" and r.description.startswith("Estimated"):
+            parts = r.description.split()
+            for i, p in enumerate(parts):
+                if p == "Estimated" and i + 1 < len(parts):
+                    try:
+                        text_count = int(parts[i + 1])
+                    except ValueError:
+                        pass
+                    break
+    # Fallback: if parsing failed, estimate from layout_summary keyword
+    if text_count == 0 and "text-containing regions" in layout_summary.lower():
+        text_count = 1  # conservative estimate
 
     return ScreenshotAnalysis(
         filename=path.name,
@@ -576,6 +602,7 @@ def analyze_single(path: Path) -> ScreenshotAnalysis:
 def collect_images(paths: list[str], recursive: bool = False) -> list[Path]:
     """Collect all image files from the given paths."""
     images = []
+    missing = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
@@ -586,6 +613,19 @@ def collect_images(paths: list[str], recursive: bool = False) -> list[Path]:
                 images.extend(path.glob(f"{glob_pattern}{ext}"))
         elif path.is_file():
             images.append(path)
+        else:
+            missing.append(str(path))
+    # Deduplicate by absolute path
+    seen = set()
+    unique = []
+    for img in images:
+        abs_path = img.resolve()
+        if abs_path not in seen:
+            seen.add(abs_path)
+            unique.append(img)
+    # Store missing paths for reporting (attached to the returned list as metadata)
+    unique._missing = missing  # type: ignore[attr-defined]
+    return sorted(unique)
     # Deduplicate by absolute path
     seen = set()
     unique = []
@@ -727,7 +767,14 @@ def main():
     image_paths = collect_images(args.paths, recursive=args.recursive)
 
     if not image_paths:
-        print("○ No supported images found.", file=sys.stderr)
+        if errors:
+            for path, err in errors:
+                print(f"✗ {path}: {err}", file=sys.stderr)
+        elif getattr(image_paths, "_missing", None):
+            for path in image_paths._missing:
+                print(f"✗ Path not found: {path}", file=sys.stderr)
+        else:
+            print("○ No supported images found.", file=sys.stderr)
         sys.exit(1)
 
     if not args.quiet:
@@ -767,14 +814,18 @@ def main():
     json_output = json.dumps(report, indent=2, default=str)
     md_output = format_markdown(report)
 
-    # Default: JSON to stdout, markdown to stderr (both always produced)
-    print(json_output)
+    # Control output streams with --json / --markdown flags
+    output_json = args.output_json or (not args.markdown)  # default: both
+    output_md = args.markdown or (not args.output_json)  # default: both
 
-    if args.output:
+    if output_json:
+        print(json_output)
+
+    if output_md and args.output:
         Path(args.output).write_text(md_output)
         if not args.quiet:
             print(f"  ✓ Markdown report written to {args.output}", file=sys.stderr)
-    else:
+    elif output_md:
         print(md_output, file=sys.stderr)
 
     # Summary

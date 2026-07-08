@@ -9,7 +9,7 @@ When a screenshot is provided as input, run `scripts/process_screenshots.py` bef
 python3 scripts/process_screenshots.py screenshot.png
 
 # Multiple images
-python3 scripts/process_screenshots.png img1.png img2.png img3.png
+python3 scripts/process_screenshots.py img1.png img2.png img3.png
 
 # Directory (non-recursive)
 python3 scripts/process_screenshots.py ./screenshots/
