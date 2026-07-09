@@ -1,13 +1,3 @@
----
-name: clean-code
-description: "Audit code against the bbv Clean Code Cheat Sheet and write CLEAN_CODE_AUDIT.md with findings plus a priority-phased plan. User-invoked: use when the user runs /clean-code or requests a clean-code audit. Don't use for general coding, bug-fixing, or PR review."
-license: MIT
-effort: high
-metadata:
-  version: 1.2.2
-  author: "Luong NGUYEN <luongnv89@gmail.com>"
-  architecture: "inline (single-agent orchestration)"
----
 
 # Clean Code
 
@@ -15,12 +5,12 @@ Audit code against the **bbv Clean Code Cheat Sheet** (Urs Enzler, V2.2) — Cle
 
 ## When to Use
 
-**This skill is user-invoked only.** Run it only when the user explicitly:
+**This mode is user-invoked only.** Run it only when the user explicitly:
 
-- invokes `/clean-code`, or
+- selects the `clean` mode (`code-review mode:clean`), or
 - asks for a "clean code audit", "clean code review", "check this against clean code", "how clean is this code", "clean code report", or "clean code plan".
 
-Do **not** auto-trigger on general coding, bug-fixing, feature work, performance tuning, or ordinary PR review — those belong to `code-review`, `code-optimizer`, or `test-coverage`. If a request is ambiguous (plain "review this code"), assume the user wants `code-review` and ask before running this audit.
+Do **not** auto-trigger on general coding, bug-fixing, feature work, performance tuning, or ordinary PR review — those belong to the `review` or `perf` modes, or `test-coverage`. If a request is ambiguous (plain "review this code"), assume the `review` mode and ask before running this audit.
 
 ## What It Produces
 

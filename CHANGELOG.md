@@ -7,11 +7,44 @@
 | Skill | Version |
 |-------|---------|
 | fork-upstream-sync | 1.0.3 |
+| diagram-generator | 1.0.0 (umbrella routing draw.io + Excalidraw) |
 
 ### Skills Updated
 | Skill | Version Change |
 |-------|----------------|
 | tmux-agent-comms | 1.3.0 → 1.8.1 (observability + terminal option) |
+| landing-page-generator | 1.1.4 → 1.2.0 (absorbs README-to-landing as Mode B) |
+| code-review | 1.2.0 → 2.0.0 (merge code-optimizer + clean-code + slop-cleanup as modes) |
+| drawio-generator | 1.2.2 → 1.2.3 (nested under diagram-generator umbrella) |
+| excalidraw-generator | 1.3.2 → 1.3.3 (nested under diagram-generator umbrella) |
+| viral-product-evaluator | 1.2.3 → 1.2.4 (update merged-skill cross-reference) |
+
+### Removed Skills (merged into code-review modes)
+| Skill | Merged into |
+|-------|-------------|
+| code-optimizer | `code-review` → `perf` mode |
+| clean-code | `code-review` → `clean` mode |
+| slop-cleanup | `code-review` → `cleanup` mode |
+
+### Skill Consolidation (#72)
+Fewer, clearer entry points — one primary skill per intent.
+
+- **readme-to-landing-page → landing-page-generator (Mode B).** The README-to-landing-page
+  capability now lives in `landing-page-generator` as its "README landing page" mode
+  (`references/readme-mode.md`). **Migration:** if you installed `readme-to-landing-page`, install
+  `landing-page-generator` and remove the old skill — the trigger "turn my README into a landing
+  page" now routes there.
+- **drawio-generator + excalidraw-generator → diagram-generator umbrella.** Both engines moved to
+  `skills/diagram-generator/{drawio,excalidraw}-generator/` behind a new `diagram-generator` router.
+  Skill names and the `/drawio-generator` · `/excalidraw-generator` invocations are unchanged; only
+  the install path is nested (installers discover both levels). Use `/diagram-generator` to pick the
+  engine by output format.
+- **Code-quality cluster merged into `code-review` (four modes).** `code-optimizer`, `clean-code`,
+  and `slop-cleanup` are **removed** as separate skills; their full workflows become the `perf`,
+  `clean`, and `cleanup` modes of `code-review` (default = `review`). One entry point selects the
+  mode by intent or an explicit `mode:` parameter. Safety: only `cleanup` writes code, and it never
+  fires by inference. **Migration:** `/code-optimizer` → `code-review mode:perf`; `/clean-code` →
+  `code-review mode:clean`; `/slop-cleanup` → `code-review mode:cleanup`.
 
 ### Other
 - **chore(skills)**: trim SKILL.md files under 500-line limit (#67)
