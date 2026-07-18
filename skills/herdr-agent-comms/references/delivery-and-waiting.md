@@ -25,16 +25,25 @@ After `pane run` / send:
 3. If `blocked` → dialog ate focus; do not treat as delivered task.
 
 ```bash
-herdr pane run "$pane" "do the thing"
+baseline="$(mktemp)"
+herdr pane read "$pane" --source recent-unwrapped --lines 80 >"$baseline"
+suffix="$(date +%s)_$$_$RANDOM"
+completion_marker="HERDR_DONE_$suffix"
+task="do the thing
+
+After fully finishing, concatenate and print these parts without spaces: HERDR_DONE_ and $suffix"
+herdr pane run "$pane" "$task"
 if herdr wait agent-status "$pane" --status working --timeout 15000; then
   echo delivered
+elif ! cmp -s "$baseline" <(herdr pane read "$pane" --source recent-unwrapped --lines 80); then
+  echo delivered-transcript-activity
 else
   herdr pane send-keys "$pane" enter
   herdr wait agent-status "$pane" --status working --timeout 10000 || echo NOT-DELIVERED
 fi
 ```
 
-On-screen text alone does not prove submission (typed but not Enter'd looks the same). Status `working` (or new output while leaving idle) is the reliable signal.
+On-screen text alone does not prove submission. Status `working` or output different from the **pre-send baseline** proves delivery activity. The difference may only be prompt echo. Split the completion marker into two prompt fragments; only the finished reply contains the joined marker. Keep `baseline` and `completion_marker` for the wait.
 
 ## Completion: idle vs done
 
@@ -47,8 +56,11 @@ Both mean "not working anymore." After a task:
 Orchestrator pattern — **accept either terminal state**; do not spend the whole budget on `done` alone (focused tabs finish as `idle`):
 
 ```bash
-# Preferred helper (requires saw working / transcript change before success):
-python3 scripts/wait_for_idle.py "$pane" --timeout 180
+# Preferred helper. The pre-send baseline closes the fast-completion race:
+python3 scripts/wait_for_idle.py "$pane" --timeout 180 --lines 80 \
+  --baseline-file "$baseline" --completion-marker "$completion_marker"
+rc=$?
+rm -f "$baseline"
 
 # Manual: poll pane get for idle|done|blocked while re-waiting in short slices
 deadline=$((SECONDS + 180))
@@ -64,7 +76,7 @@ while (( SECONDS < deadline )); do
 done
 ```
 
-`scripts/wait_for_idle.py` defaults to **post-send** semantics: already-idle panes are not success until `working` (or a transcript change) is observed. Use `--ready` only for boot waits.
+`scripts/wait_for_idle.py` defaults to **post-send** semantics. Capture `--baseline-file` before send and arrange `--completion-marker`; this closes both races: a fast reply cannot become the baseline, and stable prompt echo cannot look complete. Without a marker, content stability remains a legacy heuristic fallback. Use `--ready` only for boot waits.
 
 ## Blocked
 
@@ -106,14 +118,27 @@ The helper mirrors tmux-agent-comms' wait semantics (exit 0 idle / 2 timeout / 3
 
 ## Concurrent fleet waits
 
-Send all first, wait all second. Prefer the helper (handles `idle` **or** `done`, and post-send semantics):
+Capture every baseline first, then send all, then wait concurrently. This order handles agents that finish before their waiter process starts:
 
 ```bash
-for p in "${panes[@]}"; do herdr pane run "$p" "$msg"; done
-for p in "${panes[@]}"; do
-  python3 scripts/wait_for_idle.py "$p" --timeout 180 &
+tmpdir="$(mktemp -d)"
+markers=()
+tasks=()
+for i in "${!panes[@]}"; do
+  herdr pane read "${panes[$i]}" --source recent-unwrapped --lines 80 >"$tmpdir/$i.baseline"
+  suffix="$(date +%s)_$$_${i}_$RANDOM"
+  markers+=("HERDR_DONE_$suffix")
+  tasks[$i]="$msg
+
+After fully finishing, concatenate and print: HERDR_DONE_ and $suffix"
+done
+for i in "${!panes[@]}"; do herdr pane run "${panes[$i]}" "${tasks[$i]}"; done
+for i in "${!panes[@]}"; do
+  python3 scripts/wait_for_idle.py "${panes[$i]}" --timeout 180 --lines 80 \
+    --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
 done
 wait
+rm -rf "$tmpdir"
 ```
 
 Or with raw waits — **do not** wait only on `done` (focused fleet tabs usually finish as `idle`):

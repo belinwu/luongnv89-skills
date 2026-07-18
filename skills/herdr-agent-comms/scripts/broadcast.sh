@@ -11,6 +11,7 @@
 #
 # Options (env vars):
 #   HAC_TIMEOUT       per-agent wait timeout in seconds (default: 180)
+#   HAC_LINES         transcript lines used for baseline + reply (default: 60)
 #   HAC_WAIT_ARGS     extra args passed to wait_for_idle.py (e.g. "--full")
 #
 # Exit 0 if all agents settled idle/done; otherwise 1.
@@ -20,6 +21,7 @@ set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 waiter="$here/wait_for_idle.py"
 timeout="${HAC_TIMEOUT:-180}"
+lines="${HAC_LINES:-60}"
 
 if [ "$#" -lt 2 ]; then
   echo "Error: need a message and at least one target." >&2
@@ -73,23 +75,43 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
-# Phase 2: fan out (pane run = text + Enter)
-for p in "${panes[@]}"; do
-  herdr pane run "$p" "$msg" >/dev/null || {
+# Phase 2: snapshot every pane BEFORE send. A fast agent can finish before its
+# waiter starts; stable output after this baseline still proves new activity.
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/hac_broadcast.XXXXXX")"
+trap 'rm -rf "$tmpdir"' EXIT
+for i in "${!panes[@]}"; do
+  if ! herdr pane read "${panes[$i]}" --source recent-unwrapped --lines "$lines" \
+    >"$tmpdir/$i.baseline"; then
+    echo "Error: could not capture baseline for ${panes[$i]}" >&2
+    exit 1
+  fi
+done
+
+# Phase 3: fan out. The full marker is deliberately absent from the prompt:
+# prompt echo contains its two halves; only the completed reply joins them.
+markers=()
+for i in "${!panes[@]}"; do
+  p="${panes[$i]}"
+  suffix="$(date +%s)_$$_${i}_${RANDOM}"
+  markers+=("HERDR_DONE_$suffix")
+  task="$msg
+
+After fully finishing the task, concatenate and print these two parts without spaces: HERDR_DONE_ and $suffix"
+  herdr pane run "$p" "$task" >/dev/null || {
     echo "Error: pane run failed for $p" >&2
     exit 1
   }
 done
 
-# Phase 3: wait concurrently
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/hac_broadcast.XXXXXX")"
-trap 'rm -rf "$tmpdir"' EXIT
+# Phase 4: wait concurrently
 pids=()
 for i in "${!panes[@]}"; do
   p="${panes[$i]}"
   # shellcheck disable=SC2086
   (
     python3 "$waiter" "$p" --timeout "$timeout" ${HAC_WAIT_ARGS:-} \
+      --lines "$lines" --baseline-file "$tmpdir/$i.baseline" \
+      --completion-marker "${markers[$i]}" \
       >"$tmpdir/$i.out" 2>"$tmpdir/$i.err"
     echo "$?" >"$tmpdir/$i.code"
   ) &
@@ -97,7 +119,7 @@ for i in "${!panes[@]}"; do
 done
 for pid in "${pids[@]}"; do wait "$pid"; done
 
-# Phase 4: emit labeled blocks
+# Phase 5: emit labeled blocks
 overall=0
 for i in "${!panes[@]}"; do
   label="${labels[$i]}"

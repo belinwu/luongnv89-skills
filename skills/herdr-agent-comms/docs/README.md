@@ -7,11 +7,11 @@
 
 # Herdr Agent Comms
 
-> Split sub-agents from the **root agent pane** into **one tab** — root stays put, workers appear beside it, messaging via the `herdr` CLI with status-aware waits.
+> Tile **root + sub-agents** into **one grid tab** — root stays put, workers fill balanced cells, messaging via the `herdr` CLI with status-aware waits.
 
 ## Highlights
 
-- **Root + sub-agents, one tab** — every sub-agent is a split of `$HERDR_PANE_ID` (or the resolved root pane).
+- **Root + sub-agents grid** — largest-pane splits keep root and workers in a usable tiled layout.
 - **Root never replaced** — orchestrator pane stays; only close worker panes on teardown.
 - **Fleet spawn** — agent CLI + model + thinking + optional skills, then assign tasks in parallel.
 - **Message & steer** — `pane run` / `agent send`, wait on `working` → `done`/`idle`, read transcripts.
@@ -22,7 +22,7 @@
 
 | Say this... | Skill will... |
 |---|---|
-| "Spin up 2 Herdr agents beside me: reviewer and tests" | Split root pane right/down, launch agents in same tab |
+| "Spin up 2 Herdr agents beside me: reviewer and tests" | Build a grid in the root tab, launch agents in balanced cells |
 | "Ask the reviewer agent what it found" | Resolve target, send, wait on status, relay reply |
 | "Broadcast 'pull main' to all fleet agents" | Fan-out send + concurrent collect |
 | "Focus the tests pane so I can steer" | `herdr agent focus tests` |
@@ -31,7 +31,7 @@
 
 ```mermaid
 graph TD
-    A["Resolve root pane + tab + workspace"] --> B["pane split root --direction right/down"]
+    A["Resolve root pane + tab + workspace"] --> B["next_grid_split · pane split largest"]
     B --> C["Rename sub-pane · launch CLI · wait idle"]
     C --> D["Submit tasks · broadcast"]
     D --> E["Wait agent-status done|idle"]
@@ -46,14 +46,14 @@ graph TD
 /herdr-agent-comms
 ```
 
-Or describe the goal — "split a reviewer agent from my pane", "launch a Herdr fleet beside me".
+Or describe the goal — "tile a reviewer agent with my pane", "launch a Herdr fleet grid beside me".
 
 ## Popular Use Cases
 
-### 1. Sub-agents beside the root (default)
+### 1. Root + sub-agents grid (default)
 
 ```
-/herdr-agent-comms spin up 2 pi agents split from my pane:
+/herdr-agent-comms spin up 2 pi agents in a grid with my pane:
 - reviewer: thinking medium — review the last commit
 - tests: thinking low — propose a minimal test plan
 ```

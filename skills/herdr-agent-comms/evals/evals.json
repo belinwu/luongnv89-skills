@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "I have a Herdr agent named 'reviewer' already running. Ask it to summarize the open PRs and show me what it says back.",
-      "expected_output": "Resolves the reviewer target via herdr agent get/list, sends with pane run (or agent send + enter), waits on agent-status (working then done/idle) rather than a blind sleep, reads recent-unwrapped, and relays the reply.",
+      "expected_output": "Resolves the reviewer target via herdr agent get/list, captures a pre-send transcript baseline, sends with pane run (or agent send + enter), waits on agent-status (working then done/idle) rather than a blind sleep, uses a split completion marker that cannot be satisfied by prompt echo to recognize a fast reply, reads recent-unwrapped, and relays the reply.",
       "files": []
     },
     {
       "id": 2,
       "prompt": "Spin up two Herdr agents for this project named 'tests' and 'docs'. Use pi with thinking low for both. Split them from my current pane so I can see root + both agents in one tab.",
-      "expected_output": "Checks herdr status, resolves root pane (HERDR_PANE_ID or equivalent), splits root pane twice with --no-focus (not new tabs, not a separate fleet tab), launches pi --thinking low in each sub-pane, renames agents, waits until idle/ready, keeps root agent pane. No server stop.",
+      "expected_output": "Checks herdr status, resolves root pane (HERDR_PANE_ID or equivalent), builds a same-tab grid including root by splitting the largest pane twice with --no-focus (not new tabs, not a separate fleet tab, not repeated slivers from one pane), launches pi --thinking low in each sub-pane, renames agents, waits until idle/ready, keeps root agent pane. No server stop.",
       "files": []
     },
     {
@@ -22,13 +22,13 @@
     {
       "id": 4,
       "prompt": "Launch three Herdr agents (reviewer, tests, docs) for this repo with different tasks in parallel and keep them visible in one view so I can jump into any pane to steer.",
-      "expected_output": "Resolves root pane/tab, splits three sub-agent panes from the root into the same tab (no-focus), submits distinct tasks, explains human can herdr agent focus a pane to steer, does not create per-agent tabs, does not nest tmux.",
+      "expected_output": "Resolves root pane/tab, builds a same-tab grid including root by largest-pane splits for three sub-agents (no-focus), submits distinct tasks, explains human can herdr agent focus a pane to steer, does not create per-agent tabs, does not nest tmux.",
       "files": []
     },
     {
       "id": 5,
       "prompt": "Broadcast 'pull latest main and report status' to all my Herdr fleet agents and collect replies.",
-      "expected_output": "Uses broadcast.sh or equivalent send-all-then-wait-concurrent pattern, reports per-agent idle/timeout/blocked, does not serialize full send-wait-read per agent.",
+      "expected_output": "Uses broadcast.sh or equivalent capture-all-baselines, split-completion-markers, send-all, then wait-concurrent pattern so fast replies and prompt echoes are distinguished; reports per-agent idle/timeout/blocked and does not serialize full send-wait-read per agent.",
       "files": []
     },
     {

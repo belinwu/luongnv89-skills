@@ -21,6 +21,8 @@ Usage:
 
 Options:
     --timeout SEC        give up after this many seconds (default: 120)
+    --baseline-file PATH use a pre-send pane-read capture as the baseline
+    --completion-marker S require S when working transition was missed
     --quiet-cycles N     consecutive unchanged reads to call it settled (default: 3)
     --interval SEC       seconds between captures (default: 2)
     --lines N            pane read line window (default: 60)
@@ -101,10 +103,24 @@ def agent_status(pane_id: str) -> str | None:
     if cp.returncode != 0:
         return None
     try:
-        d = json.loads(cp.stdout)
-        return d["result"]["pane"].get("agent_status")
+        return json.loads(cp.stdout)["result"]["pane"].get("agent_status")
     except (json.JSONDecodeError, KeyError):
         return None
+
+
+def extract_pane_text(out: str) -> str:
+    """Normalize either raw text or `herdr pane read` JSON to transcript text."""
+    try:
+        d = json.loads(out)
+        r = d.get("result", d)
+        for key in ("text", "content", "output", "data"):
+            if isinstance(r.get(key), str):
+                return r[key]
+        if isinstance(r.get("lines"), list):
+            return "\n".join(str(x) for x in r["lines"])
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return out
 
 
 def pane_read(pane_id: str, lines: int) -> str:
@@ -120,20 +136,8 @@ def pane_read(pane_id: str, lines: int) -> str:
             str(lines),
         ]
     )
-    if cp.returncode != 0:
-        return cp.stdout or cp.stderr or ""
-    out = cp.stdout or ""
-    try:
-        d = json.loads(out)
-        r = d.get("result", d)
-        for key in ("text", "content", "output", "data"):
-            if isinstance(r.get(key), str):
-                return r[key]
-        if isinstance(r.get("lines"), list):
-            return "\n".join(str(x) for x in r["lines"])
-    except json.JSONDecodeError:
-        pass
-    return out
+    out = cp.stdout or cp.stderr or ""
+    return extract_pane_text(out)
 
 
 def wait_status(pane_id: str, status: str, timeout_ms: int) -> bool:
@@ -170,6 +174,14 @@ def main() -> int:
     )
     ap.add_argument("target", help="pane id or agent name")
     ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument(
+        "--baseline-file",
+        help="pre-send `herdr pane read` capture; closes the fast-completion race",
+    )
+    ap.add_argument(
+        "--completion-marker",
+        help="marker the agent prints only after finishing the task",
+    )
     ap.add_argument("--quiet-cycles", type=int, default=3)
     ap.add_argument("--interval", type=float, default=2.0)
     ap.add_argument("--lines", type=int, default=60)
@@ -206,13 +218,22 @@ def main() -> int:
         return 1
 
     deadline = time.time() + args.timeout
-    baseline = pane_read(pane_id, args.lines)
+    if args.baseline_file:
+        try:
+            with open(args.baseline_file, encoding="utf-8") as f:
+                baseline = extract_pane_text(f.read())
+        except OSError as e:
+            print(f"Error: could not read baseline file: {e}", file=sys.stderr)
+            return 1
+    else:
+        baseline = pane_read(pane_id, args.lines)
     saw_work = False  # working status or transcript change
+    saw_working = False  # authoritative working transition
 
     st = agent_status(pane_id)
     if st == "blocked":
         if not args.no_print:
-            print(baseline if args.full else "")
+            print_delta(baseline, pane_read(pane_id, args.lines), args.full)
         return 3
 
     if args.ready and st in ("idle", "done") and args.prefer_status:
@@ -230,6 +251,7 @@ def main() -> int:
 
             if st == "working":
                 saw_work = True
+                saw_working = True
                 slice_ms = min(30_000, max(1, int((deadline - time.time()) * 1000)))
                 # Prefer short waits so we can notice idle or done either way
                 half = max(1, slice_ms // 2)
@@ -241,14 +263,22 @@ def main() -> int:
                 cur = pane_read(pane_id, args.lines)
                 if cur != baseline:
                     saw_work = True
-                if saw_work or args.ready:
+                marker_seen = (
+                    args.completion_marker is not None
+                    and args.completion_marker in cur
+                )
+                if args.ready or saw_working or marker_seen:
                     if not args.no_print:
                         print_delta(baseline, cur, args.full)
                     return 0
+                if saw_work and args.completion_marker is None:
+                    # Legacy fallback when no marker was arranged before send.
+                    break
                 # Pre-task idle: wait for working (or transcript change via status loop)
                 slice_ms = min(5_000, max(1, int((deadline - time.time()) * 1000)))
                 if wait_status(pane_id, "working", slice_ms):
                     saw_work = True
+                    saw_working = True
                     continue
                 # Also check blocked while waiting to start
                 if agent_status(pane_id) == "blocked":
@@ -274,7 +304,12 @@ def main() -> int:
             return 3
         if st == "working":
             saw_work = True
+            saw_working = True
         cur = pane_read(pane_id, args.lines)
+        if args.completion_marker and args.completion_marker in cur:
+            if not args.no_print:
+                print_delta(baseline, cur, args.full)
+            return 0
         if cur != last:
             if cur != baseline:
                 saw_work = True
@@ -284,6 +319,10 @@ def main() -> int:
         quiet += 1
         if quiet >= args.quiet_cycles:
             if st == "working":
+                quiet = 0
+                continue
+            if args.completion_marker and not args.ready:
+                # Marker-enabled sends never infer completion from quiet prompt echo.
                 quiet = 0
                 continue
             if not saw_work and not args.ready:

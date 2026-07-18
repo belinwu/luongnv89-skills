@@ -1,35 +1,40 @@
 ---
 name: herdr-agent-comms
-description: "Manage AI agent fleets in Herdr: split sub-agents from the root agent pane into one tab, message/wait/read via herdr CLI, steer any pane. Use for Herdr multi-agent fleets. Don't use for tmux, screen, or non-Herdr terminals."
+description: "Manage AI agent fleets in Herdr: split root + sub-agents into one tab as a tiled grid, message/wait/read via herdr CLI, steer any pane. Use for Herdr multi-agent fleets. Don't use for tmux, screen, or non-Herdr terminals."
 license: MIT
 effort: medium
 metadata:
-  version: 1.2.1
+  version: 1.3.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
 
 # Herdr Agent Comms
 
-Manage and talk to AI agents (Claude Code, pi, Codex, OpenCode, or any CLI) by **splitting the root agent's pane**: the **root agent stays put**, each **sub-agent is a new split in the same tab**, then **send** / **wait** / **read** / **tear down** via the `herdr` CLI.
+Manage and talk to AI agents (Claude Code, pi, Codex, OpenCode, or any CLI) by building a **grid layout in the root agent's tab**: the **root agent stays put**, each **sub-agent is a new tiled split**, then **send** / **wait** / **read** / **tear down** via the `herdr` CLI.
 
 Mental model (Herdr concepts, not tmux):
 
 | Concept | Role in this skill |
 |---|---|
 | **Root agent** | Orchestrator pane (usually the caller: `$HERDR_PANE_ID`) — never replaced by a sub-agent |
-| **Root tab** | The root agent's tab — **single view** holding root + every sub-agent pane |
-| **Sub-agent pane** | Created only by splitting the root pane (or another pane in the root tab) |
+| **Root tab** | The root agent's tab — **single grid** holding root + every sub-agent pane |
+| **Sub-agent pane** | Created by splitting the current largest pane in the root tab (often root first) |
 | **Agent name** | Stable handle for send/wait/read (`reviewer`, `tests`, …) |
 
-Default layout after spawning two sub-agents:
+Default layout after spawning three sub-agents (balanced grid including root; **vertical panel first**):
 
 ```
 Tab (root's tab)
-├── pane root     ← root / orchestrator agent (you)
-├── pane right    ← sub-agent reviewer
-└── pane down     ← sub-agent tests
+┌───────────────────────────┐
+│ root (you)                │
+├─────────────┬─────────────┤
+│ reviewer    │ tests       │
+├─────────────┴─────────────┤
+│ docs                      │
+└───────────────────────────┘
 ```
+(Exact tiles depend on aspect ratios; first split prefers `down`.)
 
 You orchestrate with the `herdr` CLI. Prefer agent-status waits over scrollback polling. Relay each agent's answer, not its whole screen.
 
@@ -64,7 +69,7 @@ Six phases, in order: ensure server + resolve root, split sub-agents from root, 
 
 1. **Confirm before destructive actions.** Closing panes/tabs/workspaces or `herdr server stop` can lose agent work — never without explicit user go-ahead. Reading panes is always safe. **Never close the root pane** unless the user explicitly asks to kill the orchestrator.
 2. **Parse IDs from JSON.** Workspace/tab/pane IDs are opaque (`w26`, `w26:t2`, `w26:p4`). Never invent them from sidebar order.
-3. **Split from the root agent — one tab.** Default spawn **splits the root agent's pane** so the human sees **root + all sub-agents in a single tab**. Do **not** create a separate fleet tab and do **not** put the first sub-agent on a new tab's root pane. New tabs only when the user explicitly asks for isolation.
+3. **Grid layout in the root tab.** Default spawn builds a **tiled grid that includes the root agent**. Split the **largest current pane** (not always the same pane), alternating `right`/`down` by geometry so root and workers stay balanced. Do **not** create a separate fleet tab and do **not** put the first sub-agent on a new tab's root pane. New tabs only when the user explicitly asks for isolation.
 4. **Prefer `--no-focus` while spawning** so focus stays on the root agent. Use `herdr agent focus <name>` when the user wants to type into a sub-agent.
 5. **Wait on agent status, don't race.** After send, wait for `working` then `idle`/`done` (Phase 4). Don't send a follow-up while status is `working`.
 6. **`pane run` submits text + Enter.** Prefer it over separate `send-text`/`send-keys` for prompts. `agent send` is literal text only (no Enter) — use when you must type without submitting.
@@ -102,15 +107,19 @@ Optional: `herdr integration install pi|claude|codex|opencode|hermes` for better
 
 **Done when:** you have concrete `root_pane`, `root_tab`, `ws`, and the server is running. Root agent stays alive in `root_pane`.
 
-## Phase 2: Spawn Sub-Agents by Splitting the Root Pane
+## Phase 2: Spawn Sub-Agents into a Grid (Root Included)
 
-Every sub-agent is a **split of the root pane** (same tab). The root agent is **not** moved, renamed into a worker, or replaced.
+Every sub-agent joins the **same tab as the root agent** as part of a **tiled grid**. The root agent is **not** moved, renamed into a worker, or replaced.
 
-### 2a — Split root → launch sub-agent
+### 2a — Split the largest pane → launch sub-agent
+
+Do **not** always split `$root_pane`. Always pick the current largest cell so root and workers stay roughly equal size:
 
 ```bash
 project_dir=/path/to/project   # usually root pane cwd
 root_pane="$HERDR_PANE_ID"     # from Phase 1
+here="$(cd "$(dirname "$0")" 2>/dev/null; pwd)"  # skill scripts/ when known
+# or: here=skills/herdr-agent-comms/scripts
 name=reviewer
 agent_cmd='pi --thinking medium'
 # optional skills for pi:  --skill /path/to/SKILL.md
@@ -118,41 +127,49 @@ agent_cmd='pi --thinking medium'
 # free name if taken
 herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
 
-# Split the ROOT pane (not an anonymous new tab). Always --no-focus.
-dir=right   # first sub-agent: right; later: alternate down / right
-split_json="$(herdr pane split "$root_pane" --direction "$dir" --cwd "$project_dir" --no-focus)"
+# Choose largest pane + direction from live geometry (includes root).
+read -r split_from dir < <(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
+split_json="$(herdr pane split "$split_from" --direction "$dir" --cwd "$project_dir" --no-focus)"
 # JSON shape: result.pane.pane_id (verify once with your herdr version if needed)
 sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r.get("root_pane") or r)["pane_id"])')"
 
-herdr pane rename "$sub_pane" "$name"
-herdr agent rename "$sub_pane" "$name"
-herdr pane run "$sub_pane" "$agent_cmd"
+herdr pane rename "$sub_pane" "$name" >/dev/null
+herdr agent rename "$sub_pane" "$name" >/dev/null
+herdr pane run "$sub_pane" "$agent_cmd" >/dev/null
 ```
 
-**Second / third sub-agent** — keep splitting from the **root pane** (or the last sub-pane if root is already too narrow); stay on `root_tab`:
+**Second / third sub-agent** — re-run the chooser each time (geometry changes after every split):
 
 ```bash
 name=tests
 herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-split_json="$(herdr pane split "$root_pane" --direction down --cwd "$project_dir" --no-focus)"
+read -r split_from dir < <(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
+split_json="$(herdr pane split "$split_from" --direction "$dir" --cwd "$project_dir" --no-focus)"
 sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
-herdr pane rename "$sub_pane" "$name"
-herdr agent rename "$sub_pane" "$name"
-herdr pane run "$sub_pane" 'pi --thinking low'
+herdr pane rename "$sub_pane" "$name" >/dev/null
+herdr agent rename "$sub_pane" "$name" >/dev/null
+herdr pane run "$sub_pane" 'pi --thinking low' >/dev/null
 ```
 
-**Alternative** (same tab, less precise about which pane is split): `herdr agent start` into the root tab:
+**Manual fallback** when the helper is unavailable: inspect `herdr pane layout --pane "$root_pane"`, split the largest pane by `rect.width * rect.height`, use **`down` if height ≥ width else `right`**. Stay on `root_tab`.
+
+**Alternative** (same tab, less balanced): `herdr agent start` into the root tab:
 
 ```bash
 herdr agent start "$name" --cwd "$project_dir" --workspace "$ws" --tab "$root_tab" \
   --split right --no-focus -- pi --thinking medium
 ```
 
-Prefer **`pane split "$root_pane"`** so the split is anchored on the root agent, not whichever pane last held focus.
+Prefer **`next_grid_split.py` + `pane split`** so the grid includes root and stays balanced. Avoid always splitting the same pane (creates long slivers).
 
-**Split direction rule:** prefer `right` when the source pane is wider than tall; prefer `down` when tall/narrow. If unknown, **alternate** `right`, `down`, `right`, …. Avoid repeating one direction until panes are unusable slivers. Optional geometry: `herdr pane layout --pane "$root_pane"`.
+**Grid rules:**
+1. One tab only: root + every sub-agent.
+2. Before each split, choose the **largest** pane in that tab (tie-break: root).
+3. Direction from that pane's aspect: **`down` when taller or square** (vertical panel first), `right` only when clearly wider.
+4. Always `--no-focus` so the root keeps the keyboard.
+5. Optional check: `herdr pane layout --pane "$root_pane"` should show multiple similar-sized rects, not one huge pane and thin strips.
 
-**Forbidden by default:** `herdr tab create` per sub-agent; hijacking the root pane with the first worker's CLI; `herdr workspace create` just to host workers when a root pane already exists in the project workspace.
+**Forbidden by default:** `herdr tab create` per sub-agent; hijacking the root pane with the first worker's CLI; `herdr workspace create` just to host workers when a root pane already exists; stacking every split from only `$root_pane` after the first cell is already small.
 
 **Optional (user asks for isolation):** tab-per-agent — see `references/herdr-recipes.md`. Not the default.
 
@@ -177,8 +194,8 @@ herdr wait agent-status "$sub_pane" --status idle --timeout 60000
 # if timeout: herdr pane get / herdr agent explain "$sub_pane"
 # if blocked: surface to user (Rule 7)
 
-herdr pane run "$sub_pane" "Review the open PR diff and report only actionable findings."
-herdr wait agent-status "$sub_pane" --status working --timeout 30000 || true
+# Assign through Phase 4 so a pre-send baseline is captured before pane run.
+# Then collect through Phase 5 with that baseline.
 ```
 
 **Fleet spawn:** split every sub-agent first (`--no-focus`), launch every CLI, then wait/read concurrently — don't fully serialize spawn→wait→read per agent when the user wants parallel work. `scripts/broadcast.sh` fans messages after spawn.
@@ -187,7 +204,7 @@ herdr wait agent-status "$sub_pane" --status working --timeout 30000 || true
 
 Detach the Herdr client with `prefix+q` (`ctrl+b` then `q`); agents keep running.
 
-**Done when:** each sub-agent has `sub_pane` + agent `name`, **same `root_tab` as the root pane**, root pane still holds the orchestrator, status is not stuck on `unknown` after boot wait, and initial tasks (if any) have been submitted.
+**Done when:** each sub-agent has `sub_pane` + agent `name`, **same `root_tab` as the root pane**, layout is a **grid that includes the root pane** (not stacked slivers), root pane still holds the orchestrator, status is not stuck on `unknown` after boot wait, and initial tasks (if any) have been submitted.
 
 ## Phase 3: Resolve the Exact Target
 
@@ -204,13 +221,23 @@ If the name is missing, list agents and surface the closest match — don't sile
 
 ## Phase 4: Send a Message
 
+Capture the transcript **before sending**. This lets Phase 5 recognize a fast reply even if the agent finishes before the waiter starts:
+
 ```bash
-# preferred — text + Enter
-herdr pane run "$pane_id" "summarize the changes in src/"
+baseline_file="$(mktemp)"
+herdr pane read "$pane_id" --source recent-unwrapped --lines 80 >"$baseline_file"
+marker_suffix="$(date +%s)_$$_$RANDOM"
+completion_marker="HERDR_DONE_$marker_suffix"
+
+# Keep the full marker out of the prompt so prompt echo cannot satisfy the wait.
+task="summarize the changes in src/
+
+After fully finishing, concatenate and print these two parts without spaces: HERDR_DONE_ and $marker_suffix"
+herdr pane run "$pane_id" "$task"
 
 # by name (literal text only — add Enter yourself if needed)
-herdr agent send reviewer "summarize the changes in src/"
-herdr pane send-keys "$pane_id" enter
+# herdr agent send reviewer "summarize the changes in src/"
+# herdr pane send-keys "$pane_id" enter
 ```
 
 **Escaping:** pass the message as a single argv to `herdr` (quoted for the shell). For multi-line or code-heavy payloads, write a temp file and send a short instruction that reads it — see `references/herdr-recipes.md`.
@@ -218,18 +245,33 @@ herdr pane send-keys "$pane_id" enter
 **Verify delivery:** after send, status should leave `idle` for `working` (or stay `blocked` if a dialog ate the input):
 
 ```bash
-herdr wait agent-status "$pane_id" --status working --timeout 15000 \
-  && echo delivered || echo NOT-DELIVERED
+if herdr wait agent-status "$pane_id" --status working --timeout 15000; then
+  echo delivered
+elif ! cmp -s "$baseline_file" <(herdr pane read "$pane_id" --source recent-unwrapped --lines 80); then
+  echo delivered-transcript-activity
+else
+  echo NOT-DELIVERED
+fi
 ```
 
-`NOT-DELIVERED` → lone Enter via `herdr pane send-keys "$pane_id" enter`, re-check; if still idle with no new output, re-send. Inspect with `herdr pane read "$pane_id" --source recent-unwrapped --lines 40`.
+`NOT-DELIVERED` → lone Enter via `herdr pane send-keys "$pane_id" enter`, re-check; if still idle with no new output, re-send. A transcript change proves delivery activity, but may be only the echoed prompt; do **not** submit an extra Enter. The split completion marker lets Phase 5 distinguish echo from a finished reply.
 
 ## Phase 5: Wait for the Reply, Then Read It
 
-Use Herdr status waits (not fixed `sleep`). Completion may be **`done`** (unseen, usually background) **or `idle`** (seen / focused tab) — wait for either:
+Use Herdr status waits (not fixed `sleep`). Completion may be **`done`** (unseen, usually background) **or `idle`** (seen / focused tab) — wait for either. Prefer the helper with the Phase 4 pre-send baseline; without it, a fast agent can finish before the waiter snapshots the pane and leave the root waiting until timeout:
 
 ```bash
-# After delivery verified (Phase 4). Poll until idle|done|blocked or budget spent.
+python3 scripts/wait_for_idle.py "$pane_id" --timeout 180 --lines 80 \
+  --baseline-file "$baseline_file" --completion-marker "$completion_marker"
+rc=$?
+rm -f "$baseline_file"
+# rc: 0 settled, 2 timeout, 3 blocked
+```
+
+Manual fallback after delivery is verified:
+
+```bash
+# Poll until idle|done|blocked or budget spent.
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
   st=$(herdr pane get "$pane_id" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"].get("agent_status",""))')
@@ -315,26 +357,37 @@ root_tab="$HERDR_TAB_ID"
 ws="$HERDR_WORKSPACE_ID"
 project_dir="$(pwd)"
 
+here="skills/herdr-agent-comms/scripts"  # adjust if installed elsewhere
 spawn_sub() {
-  local name="$1" dir="$2" cmd="$3" task="$4"
-  local split_json pane
+  local name="$1" cmd="$2"
+  local split_from dir split_json pane
   herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-  split_json="$(herdr pane split "$root_pane" --direction "$dir" --cwd "$project_dir" --no-focus)"
+  read -r split_from dir < <(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
+  split_json="$(herdr pane split "$split_from" --direction "$dir" --cwd "$project_dir" --no-focus)"
   pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
-  herdr pane rename "$pane" "$name"
-  herdr agent rename "$pane" "$name"
-  herdr pane run "$pane" "$cmd"
-  herdr wait agent-status "$pane" --status idle --timeout 60000
-  herdr pane run "$pane" "$task"
+  herdr pane rename "$pane" "$name" >/dev/null
+  herdr agent rename "$pane" "$name" >/dev/null
+  herdr pane run "$pane" "$cmd" >/dev/null
+  herdr wait agent-status "$pane" --status idle --timeout 60000 >/dev/null
   printf '%s\n' "$pane"
 }
 
-p1="$(spawn_sub reviewer right 'pi --thinking medium' 'Review recent commits for risk; bullet findings only.')"
-p2="$(spawn_sub tests down 'pi --thinking low' 'Outline a minimal test plan for the last change.')"
+p1="$(spawn_sub reviewer 'pi --thinking medium')"
+p2="$(spawn_sub tests 'pi --thinking low')"
+
+# Capture before send so even instant replies are observable.
+b1="$(mktemp)"; b2="$(mktemp)"
+herdr pane read "$p1" --source recent-unwrapped --lines 80 >"$b1"
+herdr pane read "$p2" --source recent-unwrapped --lines 80 >"$b2"
+s1="$(date +%s)_$$_1_$RANDOM"; s2="$(date +%s)_$$_2_$RANDOM"
+herdr pane run "$p1" "Review recent commits for risk; bullet findings only. When finished, concatenate and print: HERDR_DONE_ and $s1"
+herdr pane run "$p2" "Outline a minimal test plan. When finished, concatenate and print: HERDR_DONE_ and $s2"
 
 # Same tab: root_pane + p1 + p2
-python3 scripts/wait_for_idle.py "$p1" --timeout 180
-herdr pane read "$p1" --source recent-unwrapped --lines 80
+python3 scripts/wait_for_idle.py "$p1" --timeout 180 --lines 80 --baseline-file "$b1" --completion-marker "HERDR_DONE_$s1"
+python3 scripts/wait_for_idle.py "$p2" --timeout 180 --lines 80 --baseline-file "$b2" --completion-marker "HERDR_DONE_$s2"
+rm -f "$b1" "$b2"
+# optional: use scripts/broadcast.sh to baseline/send/wait concurrently
 # optional: herdr agent focus reviewer
 ```
 
@@ -347,14 +400,16 @@ herdr pane read "$p1" --source recent-unwrapped --lines 80
 - **Name collision** — `agent rename` / `agent start` names must be unique; suffix with epoch if taken.
 - **Wrong workspace** — never spawn project B agents into project A's workspace; re-resolve Phase 1.
 - **Status `unknown`** — install integration or use `scripts/wait_for_idle.py` + `pane read`.
-- **Too many splits** — more than ~4 panes in one tab gets cramped; still split from root unless the user asks for tab-per-agent.
+- **Too many splits** — more than ~4 panes in one tab gets cramped; keep the grid helper, or switch to tab-per-agent only if the user asks.
+- **Sliver layout** — you kept splitting one pane; re-run `scripts/next_grid_split.py` and split the largest cell instead.
 - **User wants to steer** — `herdr agent focus <name>` for a sub-agent; keep CLI follow-ups only when not fighting their keyboard.
 - **Closing the wrong pane** — only close **sub-agent** panes this skill created; never close root unless asked.
-- **Accidental new fleet tab** — if you created a tab by mistake, move work into root's tab via splits from `root_pane` and close the empty tab only with confirmation.
+- **Accidental new fleet tab** — if you created a tab by mistake, move work into root's tab via grid splits and close the empty tab only with confirmation.
 
 ## Reference
 
-- `references/herdr-recipes.md` — fleet layouts, multi-line sends, focus/steer, scrollback, troubleshooting.
+- `references/herdr-recipes.md` — grid layouts, multi-line sends, focus/steer, scrollback, troubleshooting.
+- `scripts/next_grid_split.py` — choose next largest pane + split direction for a balanced grid.
 - `references/delivery-and-waiting.md` — delivery checks, idle/done/blocked, budgets.
 - Official concepts: https://herdr.dev/docs/concepts/ · CLI: https://herdr.dev/docs/cli-reference/ · cheatsheet: https://luongnv.com/awesome-cheatsheets/cheatsheets/herdr/
 
@@ -378,4 +433,4 @@ After a messaging or lifecycle operation, emit:
   Result:              PASS
 ```
 
-Adapt rows to the operation — a spawn reports `Root kept · N sub-panes split`; a teardown reports `Confirmed` and `Sub-panes closed (root kept)`. Use `⚠` for dropped delivery or escalated stall.
+Adapt rows to the operation — a spawn reports `Root kept · grid N panes · N-1 sub-panes split`; a teardown reports `Confirmed` and `Sub-panes closed (root kept)`. Use `⚠` for dropped delivery or escalated stall.
