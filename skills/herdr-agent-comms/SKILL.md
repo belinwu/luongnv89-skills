@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split sub-agents from the root ag
 license: MIT
 effort: medium
 metadata:
-  version: 1.2.0
+  version: 1.2.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---

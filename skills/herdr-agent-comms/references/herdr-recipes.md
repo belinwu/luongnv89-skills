@@ -160,6 +160,12 @@ targets=(reviewer tests docs)
 msg="Pull latest main and report branch + dirty state."
 
 # Resolve names → pane ids once, then single pane run each
+panes=()
+for t in "${targets[@]}"; do
+  p=$(herdr agent get "$t" | python3 -c 'import sys,json; d=json.load(sys.stdin); a=d.get("result",{}).get("agent") or d.get("result",{}); print(a["pane_id"])')
+  panes+=("$p")
+done
+
 for pane in "${panes[@]}"; do
   herdr pane run "$pane" "$msg"
 done
