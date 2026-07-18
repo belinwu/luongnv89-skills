@@ -9,20 +9,20 @@
     },
     {
       "id": 2,
-      "prompt": "Spin up two Herdr agents for this project named 'tests' and 'docs'. Use pi with thinking low for both. Put them in the same project workspace so I can see both panes at once.",
-      "expected_output": "Checks herdr status, reuses or creates one workspace for the project, creates one fleet tab and split panes (not one tab per agent) with --no-focus, launches pi --thinking low in each, renames agents, waits until idle/ready. No server stop.",
+      "prompt": "Spin up two Herdr agents for this project named 'tests' and 'docs'. Use pi with thinking low for both. Split them from my current pane so I can see root + both agents in one tab.",
+      "expected_output": "Checks herdr status, resolves root pane (HERDR_PANE_ID or equivalent), splits root pane twice with --no-focus (not new tabs, not a separate fleet tab), launches pi --thinking low in each sub-pane, renames agents, waits until idle/ready, keeps root agent pane. No server stop.",
       "files": []
     },
     {
       "id": 3,
       "prompt": "I'm done with all my Herdr fleet agents for this project — shut them down.",
-      "expected_output": "Treats teardown as destructive: confirms first, prefers closing the skill-created tabs/panes (or workspace if user wants) over herdr server stop unless explicitly requested, warns about lost state.",
+      "expected_output": "Treats teardown as destructive: confirms first, prefers closing skill-created sub-agent panes while keeping the root pane, avoids herdr server stop unless explicitly requested, warns about lost state.",
       "files": []
     },
     {
       "id": 4,
       "prompt": "Launch three Herdr agents (reviewer, tests, docs) for this repo with different tasks in parallel and keep them visible in one view so I can jump into any pane to steer.",
-      "expected_output": "One workspace, one fleet tab with three split panes, parallel-friendly spawn (no-focus), submits distinct tasks, explains human can herdr tab focus the fleet or herdr agent focus a pane to steer, does not nest tmux.",
+      "expected_output": "Resolves root pane/tab, splits three sub-agent panes from the root into the same tab (no-focus), submits distinct tasks, explains human can herdr agent focus a pane to steer, does not create per-agent tabs, does not nest tmux.",
       "files": []
     },
     {

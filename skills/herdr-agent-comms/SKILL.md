@@ -1,48 +1,57 @@
 ---
 name: herdr-agent-comms
-description: "Manage AI agent fleets in Herdr: one project workspace, split panes in one view, message/wait/read via herdr CLI, steer any pane. Use for Herdr multi-agent fleets. Don't use for tmux, screen, or non-Herdr terminals."
+description: "Manage AI agent fleets in Herdr: split sub-agents from the root agent pane into one tab, message/wait/read via herdr CLI, steer any pane. Use for Herdr multi-agent fleets. Don't use for tmux, screen, or non-Herdr terminals."
 license: MIT
 effort: medium
 metadata:
-  version: 1.1.0
+  version: 1.2.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
 
 # Herdr Agent Comms
 
-Manage and talk to AI agents (Claude Code, pi, Codex, OpenCode, or any CLI) as **split panes in one fleet view**: **create** a project workspace, **spawn** agents into a shared tab via splits, **send** tasks, **wait** on agent status, **capture** replies, and **tear down** when done.
+Manage and talk to AI agents (Claude Code, pi, Codex, OpenCode, or any CLI) by **splitting the root agent's pane**: the **root agent stays put**, each **sub-agent is a new split in the same tab**, then **send** / **wait** / **read** / **tear down** via the `herdr` CLI.
 
 Mental model (Herdr concepts, not tmux):
 
 | Concept | Role in this skill |
 |---|---|
-| **Workspace** | One per project/repo — all agents for that project live here |
-| **Fleet tab** | One shared tab (label e.g. `fleet`) holding the whole multi-agent view |
-| **Pane** | One agent = one split pane; primary control target (`wN:pM`) |
+| **Root agent** | Orchestrator pane (usually the caller: `$HERDR_PANE_ID`) — never replaced by a sub-agent |
+| **Root tab** | The root agent's tab — **single view** holding root + every sub-agent pane |
+| **Sub-agent pane** | Created only by splitting the root pane (or another pane in the root tab) |
 | **Agent name** | Stable handle for send/wait/read (`reviewer`, `tests`, …) |
 
-You orchestrate from outside (or from another Herdr pane) with the `herdr` CLI. Prefer Herdr's agent-status waits over polling scrollback. Relay each agent's answer, not its whole screen.
+Default layout after spawning two sub-agents:
+
+```
+Tab (root's tab)
+├── pane root     ← root / orchestrator agent (you)
+├── pane right    ← sub-agent reviewer
+└── pane down     ← sub-agent tests
+```
+
+You orchestrate with the `herdr` CLI. Prefer agent-status waits over scrollback polling. Relay each agent's answer, not its whole screen.
 
 This skill is the **Herdr counterpart** of `tmux-agent-comms`. Use this when agents should live in Herdr; use `tmux-agent-comms` for plain tmux.
 
 ## When to Use
 
-Spinning up a multi-agent fleet in Herdr, putting every agent for a project in one workspace as **side-by-side / tiled panes**, messaging or steering any pane, broadcasting to a fleet, or reading what an agent replied. Don't use for tmux/screen sessions or GUI apps.
+Spinning up sub-agents beside the root agent in **one tab**, messaging or steering any pane, broadcasting to a fleet, or reading replies. Don't use for tmux/screen sessions or GUI apps.
 
 ## Workflow
 
-Six phases, in order: ensure server + resolve workspace, spawn split-pane fleet, resolve targets, send, wait + read, continue or tear down.
+Six phases, in order: ensure server + resolve root, split sub-agents from root, resolve targets, send, wait + read, continue or tear down.
 
 **Jump straight to the phase for your task** — don't read the rest:
 
 | Your task | Start at |
 |---|---|
-| Spin up N agents for a project (agent/model/thinking/skill + task) | Phase 1 → Phase 2 |
+| Spin up N sub-agents beside the root agent | Phase 1 → Phase 2 |
 | Message an agent that's already running | Phase 3 |
 | Just read a running agent's pane (no send) | Phase 5 |
 | Broadcast the same message to a fleet | Phase 6 ("Broadcast") |
-| Shut agents / fleet tab down | Phase 6 ("Tear down") |
+| Shut sub-agents down (keep root) | Phase 6 ("Tear down") |
 
 ## Prerequisites
 
@@ -53,87 +62,99 @@ Six phases, in order: ensure server + resolve workspace, spawn split-pane fleet,
 
 ## Critical Rules
 
-1. **Confirm before destructive actions.** Closing panes/tabs/workspaces or `herdr server stop` can lose agent work — never without explicit user go-ahead. Reading panes is always safe.
+1. **Confirm before destructive actions.** Closing panes/tabs/workspaces or `herdr server stop` can lose agent work — never without explicit user go-ahead. Reading panes is always safe. **Never close the root pane** unless the user explicitly asks to kill the orchestrator.
 2. **Parse IDs from JSON.** Workspace/tab/pane IDs are opaque (`w26`, `w26:t2`, `w26:p4`). Never invent them from sidebar order.
-3. **One workspace per project; one fleet tab; split pane per agent.** Default spawn path puts **all fleet agents in a single tab** as tiled splits so the human sees everyone at once. Create a **new tab per agent only** when the user explicitly asks for full-viewport isolation.
-4. **Prefer `--no-focus` while spawning** so layout churn doesn't steal the keyboard from the human. After the fleet is up, `herdr tab focus <fleet_tab>` (or click the fleet tab) shows the whole board; `herdr agent focus <name>` zooms to one pane to type.
+3. **Split from the root agent — one tab.** Default spawn **splits the root agent's pane** so the human sees **root + all sub-agents in a single tab**. Do **not** create a separate fleet tab and do **not** put the first sub-agent on a new tab's root pane. New tabs only when the user explicitly asks for isolation.
+4. **Prefer `--no-focus` while spawning** so focus stays on the root agent. Use `herdr agent focus <name>` when the user wants to type into a sub-agent.
 5. **Wait on agent status, don't race.** After send, wait for `working` then `idle`/`done` (Phase 4). Don't send a follow-up while status is `working`.
 6. **`pane run` submits text + Enter.** Prefer it over separate `send-text`/`send-keys` for prompts. `agent send` is literal text only (no Enter) — use when you must type without submitting.
 7. **Blocked agents need humans.** Status `blocked` means a trust/auth/permission dialog — surface it; don't type the next task into the dialog.
 
-## Phase 1: Ensure Server and Project Workspace
+## Phase 1: Ensure Server and Resolve Root Agent
 
 ```bash
 command -v herdr >/dev/null || { echo "herdr missing"; exit 1; }
 herdr status
-herdr workspace list
 ```
 
-Resolve the project directory (`project_dir`) and a short workspace label (default: basename of `project_dir`).
-
-**Reuse** an existing workspace whose label or cwd matches the project when possible:
+Resolve **root** (orchestrator) context — this is the pane you split:
 
 ```bash
-herdr workspace list   # JSON: workspaces[].workspace_id, label, ...
+# Preferred when this skill runs inside Herdr (HERDR_ENV=1):
+root_pane="${HERDR_PANE_ID:?}"
+root_tab="${HERDR_TAB_ID:?}"
+ws="${HERDR_WORKSPACE_ID:?}"
+
+# Or resolve explicitly:
+# herdr pane current --current
+# herdr pane get w26:p1
 ```
 
-**Create** only when none matches:
+If `HERDR_ENV` is not set (orchestrating from outside Herdr):
+
+1. `herdr workspace list` / `herdr agent list`
+2. Pick the project workspace and an existing root agent pane the user named, **or** the focused pane
+3. Only if there is no usable root pane: create a workspace tab for the project and treat its root pane as root — still split sub-agents from that pane afterward (do not open one tab per sub-agent)
+
+Also resolve `project_dir` (default: cwd of the root pane from `herdr pane get`, else `pwd`).
+
+Optional: `herdr integration install pi|claude|codex|opencode|hermes` for better status. Not required every run.
+
+**Done when:** you have concrete `root_pane`, `root_tab`, `ws`, and the server is running. Root agent stays alive in `root_pane`.
+
+## Phase 2: Spawn Sub-Agents by Splitting the Root Pane
+
+Every sub-agent is a **split of the root pane** (same tab). The root agent is **not** moved, renamed into a worker, or replaced.
+
+### 2a — Split root → launch sub-agent
 
 ```bash
-herdr workspace create --cwd "$project_dir" --label "$label" --no-focus
-# read result.workspace.workspace_id (or equivalent) from JSON
-```
-
-Optional: install the integration for agents you resume often (`herdr integration install pi|claude|codex|opencode|hermes`) so status is authoritative. Not required for every run.
-
-**Done when:** you have a concrete `workspace_id` for the project and the server is running.
-
-## Phase 2: Spawn Split-Pane Fleet
-
-Put **all agents in one fleet tab** as tiled splits so the human sees every agent in a single view.
-
-### 2a — Create one fleet tab, then split per agent
-
-```bash
-project_dir=/path/to/project
-ws="$workspace_id"          # from Phase 1
-fleet_label=fleet           # or "${label}-fleet"
-
-# One shared tab for the whole fleet
-tab_json="$(herdr tab create --workspace "$ws" --cwd "$project_dir" --label "$fleet_label" --no-focus)"
-fleet_tab="$(printf '%s' "$tab_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
-root_pane="$(printf '%s' "$tab_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')"
-
-# --- agent 1: use the tab's root pane ---
+project_dir=/path/to/project   # usually root pane cwd
+root_pane="$HERDR_PANE_ID"     # from Phase 1
 name=reviewer
 agent_cmd='pi --thinking medium'
-herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-herdr pane rename "$root_pane" "$name"
-herdr agent rename "$root_pane" "$name"
-herdr pane run "$root_pane" "$agent_cmd"
-# record: pane_id=$root_pane
+# optional skills for pi:  --skill /path/to/SKILL.md
 
-# --- agents 2..N: split inside the same fleet tab ---
-# Alternate right/down for a usable tile (2-up: right; 3+: right then down…).
-# Always --no-focus so the human keeps their keyboard.
-name=tests
+# free name if taken
 herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-start_json="$(herdr agent start "$name" \
-  --cwd "$project_dir" --workspace "$ws" --tab "$fleet_tab" \
-  --split right --no-focus -- pi --thinking low)"
-pane_id="$(printf '%s' "$start_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["pane_id"])')"
-# if argv after -- is only the launcher, boot is done; else still wait idle before task
 
-name=docs
-herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-herdr agent start "$name" \
-  --cwd "$project_dir" --workspace "$ws" --tab "$fleet_tab" \
-  --split down --no-focus -- pi --thinking low
+# Split the ROOT pane (not an anonymous new tab). Always --no-focus.
+dir=right   # first sub-agent: right; later: alternate down / right
+split_json="$(herdr pane split "$root_pane" --direction "$dir" --cwd "$project_dir" --no-focus)"
+# JSON shape: result.pane.pane_id (verify once with your herdr version if needed)
+sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r.get("root_pane") or r)["pane_id"])')"
+
+herdr pane rename "$sub_pane" "$name"
+herdr agent rename "$sub_pane" "$name"
+herdr pane run "$sub_pane" "$agent_cmd"
 ```
 
-**Split direction rule:** prefer `right` when the target pane is wider than tall; prefer `down` when it is tall/narrow. If you cannot inspect layout, **alternate** `right`, `down`, `right`, … Avoid stacking every split in the same direction (creates unusable slivers).
+**Second / third sub-agent** — keep splitting from the **root pane** (or the last sub-pane if root is already too narrow); stay on `root_tab`:
 
-**Optional (user asked for full-viewport isolation):** one tab per agent via `herdr tab create` per name — see `references/herdr-recipes.md` ("Tab-per-agent layout"). Not the default.
+```bash
+name=tests
+herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
+split_json="$(herdr pane split "$root_pane" --direction down --cwd "$project_dir" --no-focus)"
+sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
+herdr pane rename "$sub_pane" "$name"
+herdr agent rename "$sub_pane" "$name"
+herdr pane run "$sub_pane" 'pi --thinking low'
+```
+
+**Alternative** (same tab, less precise about which pane is split): `herdr agent start` into the root tab:
+
+```bash
+herdr agent start "$name" --cwd "$project_dir" --workspace "$ws" --tab "$root_tab" \
+  --split right --no-focus -- pi --thinking medium
+```
+
+Prefer **`pane split "$root_pane"`** so the split is anchored on the root agent, not whichever pane last held focus.
+
+**Split direction rule:** prefer `right` when the source pane is wider than tall; prefer `down` when tall/narrow. If unknown, **alternate** `right`, `down`, `right`, …. Avoid repeating one direction until panes are unusable slivers. Optional geometry: `herdr pane layout --pane "$root_pane"`.
+
+**Forbidden by default:** `herdr tab create` per sub-agent; hijacking the root pane with the first worker's CLI; `herdr workspace create` just to host workers when a root pane already exists in the project workspace.
+
+**Optional (user asks for isolation):** tab-per-agent — see `references/herdr-recipes.md`. Not the default.
 
 ### 2b — Build `agent_cmd` (common CLIs)
 
@@ -144,34 +165,29 @@ herdr agent start "$name" \
 | **Codex** | `codex` | interactive default; verify flags with `codex --help` |
 | **OpenCode** | `opencode` | verify with `opencode --help` |
 
-Launch the **interactive** TUI (no `-p`/`exec` non-interactive mode) unless the user asked for fire-and-exit. Do **not** pass the long task as argv on first launch by default — boot first, then `pane run` the task (matches Herdr's own agent guide).
+Launch the **interactive** TUI (no `-p`/`exec` non-interactive mode) unless the user asked for fire-and-exit. Do **not** pass the long task as argv on first launch by default — boot first, then `pane run` the task.
 
 When using `herdr agent start … -- <argv>`, put only the launcher (+ model/thinking/skill flags) after `--`, not the long task prompt.
 
 ### 2c — Ready, then assign work
 
 ```bash
-# boot → idle (or blocked on trust) — per pane
-herdr wait agent-status "$pane_id" --status idle --timeout 60000
-# if timeout: herdr pane get / herdr agent explain "$pane_id"
+# boot → idle (or blocked on trust) — per SUB-agent pane
+herdr wait agent-status "$sub_pane" --status idle --timeout 60000
+# if timeout: herdr pane get / herdr agent explain "$sub_pane"
 # if blocked: surface to user (Rule 7)
 
-herdr pane run "$pane_id" "Review the open PR diff and report only actionable findings."
-herdr wait agent-status "$pane_id" --status working --timeout 30000 || true
+herdr pane run "$sub_pane" "Review the open PR diff and report only actionable findings."
+herdr wait agent-status "$sub_pane" --status working --timeout 30000 || true
 ```
 
-**Fleet spawn:** create the fleet tab once, spawn every split (`--no-focus`), launch every agent, then wait/read concurrently — don't fully serialize spawn→wait→read per agent when the user wants parallel work. `scripts/broadcast.sh` fans messages after spawn.
+**Fleet spawn:** split every sub-agent first (`--no-focus`), launch every CLI, then wait/read concurrently — don't fully serialize spawn→wait→read per agent when the user wants parallel work. `scripts/broadcast.sh` fans messages after spawn.
 
-**Human visibility:** after spawn, focus the fleet tab so all panes are on screen:
-
-```bash
-herdr tab focus "$fleet_tab"
-# or zoom one agent: herdr agent focus reviewer
-```
+**Human visibility:** root + sub-agents already share one tab. No extra tab focus required if the human is already on the root tab. Optional: `herdr agent focus reviewer` to type into one sub-agent; return focus to root when done orchestrating from the TUI.
 
 Detach the Herdr client with `prefix+q` (`ctrl+b` then `q`); agents keep running.
 
-**Done when:** each requested agent has `pane_id` + shared `fleet_tab` + agent `name`, all panes are in that tab, status is not stuck on `unknown` after boot wait, and initial tasks (if any) have been submitted.
+**Done when:** each sub-agent has `sub_pane` + agent `name`, **same `root_tab` as the root pane**, root pane still holds the orchestrator, status is not stuck on `unknown` after boot wait, and initial tasks (if any) have been submitted.
 
 ## Phase 3: Resolve the Exact Target
 
@@ -279,66 +295,62 @@ herdr workspace list
 **Tear down (confirmation required):**
 
 ```bash
-herdr pane close "$pane_id"         # one agent pane
-herdr tab close "$fleet_tab"        # preferred — whole fleet view at once
-herdr workspace close "$ws"         # whole project workspace — confirm
+herdr pane close "$sub_pane"        # one sub-agent — preferred
+# close every sub-agent pane this skill created; leave root_pane alone
+# herdr tab close "$root_tab"      # only if user wants the whole tab gone (kills root too)
+# herdr workspace close "$ws"      # whole project workspace — confirm
 # herdr server stop                 # kills everything — last resort, confirm
 ```
 
-Never `server stop` from inside an active session unless the user explicitly wants the server and all panes dead.
+Never `server stop` from inside an active session unless the user explicitly wants the server and all panes dead. Never close `root_pane` when only tearing down workers.
 
 ## Example
 
-Spin two agents side-by-side in one fleet tab and collect answers:
+From the root agent (inside Herdr), split two sub-agents into the same tab and collect answers:
 
 ```bash
+# Phase 1 — root is the caller
+root_pane="$HERDR_PANE_ID"
+root_tab="$HERDR_TAB_ID"
+ws="$HERDR_WORKSPACE_ID"
 project_dir="$(pwd)"
-label="$(basename "$project_dir")"
-export L="$label"
-ws="$(herdr workspace list | python3 -c "
-import sys,json,os
-d=json.load(sys.stdin); label=os.environ['L']
-for w in d['result']['workspaces']:
-    if w.get('label')==label: print(w['workspace_id']); break
-" )"
-# if empty: create with herdr workspace create --cwd "$project_dir" --label "$label" --no-focus
 
-tab_json="$(herdr tab create --workspace "$ws" --cwd "$project_dir" --label fleet --no-focus)"
-fleet_tab="$(printf '%s' "$tab_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
-p1="$(printf '%s' "$tab_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')"
+spawn_sub() {
+  local name="$1" dir="$2" cmd="$3" task="$4"
+  local split_json pane
+  herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
+  split_json="$(herdr pane split "$root_pane" --direction "$dir" --cwd "$project_dir" --no-focus)"
+  pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
+  herdr pane rename "$pane" "$name"
+  herdr agent rename "$pane" "$name"
+  herdr pane run "$pane" "$cmd"
+  herdr wait agent-status "$pane" --status idle --timeout 60000
+  herdr pane run "$pane" "$task"
+  printf '%s\n' "$pane"
+}
 
-herdr pane rename "$p1" reviewer
-herdr agent rename "$p1" reviewer
-herdr pane run "$p1" 'pi --thinking medium'
+p1="$(spawn_sub reviewer right 'pi --thinking medium' 'Review recent commits for risk; bullet findings only.')"
+p2="$(spawn_sub tests down 'pi --thinking low' 'Outline a minimal test plan for the last change.')"
 
-j2="$(herdr agent start tests --cwd "$project_dir" --workspace "$ws" --tab "$fleet_tab" \
-  --split right --no-focus -- pi --thinking low)"
-p2="$(printf '%s' "$j2" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["pane_id"])')"
-
-for p in "$p1" "$p2"; do
-  herdr wait agent-status "$p" --status idle --timeout 60000
-done
-herdr pane run "$p1" 'Review recent commits for risk; bullet findings only.'
-herdr pane run "$p2" 'Outline a minimal test plan for the last change.'
-
-herdr tab focus "$fleet_tab"   # show both panes in one view
+# Same tab: root_pane + p1 + p2
 python3 scripts/wait_for_idle.py "$p1" --timeout 180
 herdr pane read "$p1" --source recent-unwrapped --lines 80
-herdr agent focus reviewer     # optional: zoom to type into one pane
+# optional: herdr agent focus reviewer
 ```
 
 ## Edge Cases
 
-- **Not inside Herdr / no server** — CLI still talks to the socket if the server runs; if `herdr status` fails, user must start `herdr` once in a real terminal.
+- **Not inside Herdr / no server** — CLI still talks to the socket if the server runs; if `herdr status` fails, user must start `herdr` once in a real terminal. Outside Herdr, resolve an existing root pane before splitting.
 - **Nested `herdr` launch** — if `HERDR_ENV=1`, never run bare `herdr` (blocked by design). Use CLI subcommands only.
 - **Trust/auth dialog** — status `blocked`; surface it, don't submit the task.
 - **`idle` vs `done`** — both mean "finished or waiting for input"; `done` = unseen completion in background. Accept either after work.
 - **Name collision** — `agent rename` / `agent start` names must be unique; suffix with epoch if taken.
 - **Wrong workspace** — never spawn project B agents into project A's workspace; re-resolve Phase 1.
 - **Status `unknown`** — install integration or use `scripts/wait_for_idle.py` + `pane read`.
-- **Too many splits** — more than ~4 panes in one tab gets cramped; still default to splits unless the user asks for tab-per-agent, or create a second fleet tab for overflow.
-- **User wants to steer** — `herdr tab focus` for the whole board, `herdr agent focus <name>` for one pane; keep sending CLI follow-ups only when not fighting their keyboard.
-- **Closing the wrong pane/tab** — only close panes/tabs this skill created, unless the user names the target.
+- **Too many splits** — more than ~4 panes in one tab gets cramped; still split from root unless the user asks for tab-per-agent.
+- **User wants to steer** — `herdr agent focus <name>` for a sub-agent; keep CLI follow-ups only when not fighting their keyboard.
+- **Closing the wrong pane** — only close **sub-agent** panes this skill created; never close root unless asked.
+- **Accidental new fleet tab** — if you created a tab by mistake, move work into root's tab via splits from `root_pane` and close the empty tab only with confirmation.
 
 ## Reference
 
@@ -355,14 +367,15 @@ After a messaging or lifecycle operation, emit:
 ··································································
   Server:              √ pass (herdr status)
   Workspace:           √ pass (w26 · project label)
-  Target resolved:     √ pass (name: reviewer · pane: w26:p4 · fleet tab: w26:t2)
+  Root resolved:       √ pass (pane: w26:p1 · tab: w26:t1)
+  Target resolved:     √ pass (name: reviewer · pane: w26:p4 · same tab as root)
   Message sent:        √ pass (pane run)
   Message delivered:   √ pass (status → working)
   Reply settled:       √ pass (status done|idle)
   Reply captured:      √ pass (recent-unwrapped, not truncated)
-  Destructive action:  — none (or: confirmed by user)
+  Destructive action:  — none (or: confirmed by user; root kept)
   ____________________________
   Result:              PASS
 ```
 
-Adapt rows to the operation — a spawn reports `Fleet tab + splits created`; a teardown reports `Confirmed` and `Panes/tab closed`. Use `⚠` for dropped delivery or escalated stall.
+Adapt rows to the operation — a spawn reports `Root kept · N sub-panes split`; a teardown reports `Confirmed` and `Sub-panes closed (root kept)`. Use `⚠` for dropped delivery or escalated stall.
