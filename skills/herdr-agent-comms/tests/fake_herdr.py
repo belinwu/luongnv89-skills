@@ -108,6 +108,11 @@ def cmd_pane_get(args):
         # Simulate a 0-exit but unparseable/unexpected-shape response.
         print("not json at all {[")
         return 0
+    if p.get("null_pane_get"):
+        # Valid JSON, 0 exit, but a null `pane` — .get() on it would crash a
+        # naive parser. Must be treated as unverifiable, not raise.
+        print(json.dumps({"result": {"pane": None}}))
+        return 0
     # Counter-based status FLIP: report agent_status for the first
     # `status_after` gets, then switch to `status_flip_to` on every get after.
     # Deterministic "was idle at preflight, turned working/blocked before

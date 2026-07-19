@@ -386,22 +386,38 @@ for i in "${!panes[@]}"; do
 
 After fully finishing, concatenate and print: HERDR_DONE_ and $suffix"
 done
-send_failed=()
+send_failed=(); became_unsafe=()
 for i in "${!panes[@]}"; do
+  # Recheck status IMMEDIATELY before dispatch — same enum-validated pane_status
+  # broadcast.sh re-runs here. The preflight above ran before baseline capture
+  # and task prep, so a target could have turned working/blocked (or become
+  # unverifiable) in that window; sending now would clobber a dialog or race a
+  # prior task. Skip it and fold it into the failure count.
+  if ! st="$(pane_status "${panes[$i]}")" \
+     || [ "$st" = "working" ] || [ "$st" = "blocked" ]; then
+    echo "Error: ${panes[$i]} became unsafe (${st:-unverifiable}) before dispatch — skipped." >&2
+    became_unsafe+=("$i"); continue
+  fi
   herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("${panes[$i]}")
 done
 
 # Retain each waiter's exit status — a bare `wait` masks timeouts (rc 2) and
 # blocked (rc 3), so the whole broadcast would "succeed" with agents stuck.
+# Wait only on panes actually dispatched (skip became_unsafe / send_failed).
 pids=()
 for i in "${!panes[@]}"; do
+  skip=""
+  for f in ${became_unsafe[@]+"${became_unsafe[@]}"}; do [ "$f" = "$i" ] && { skip=1; break; }; done
+  [ -n "$skip" ] && continue
   python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
   pids+=("$!:${panes[$i]}")
 done
 # Seed the result with the preflight outcome: any busy/blocked/unverifiable
-# target that was skipped above must fail the whole broadcast, not vanish.
+# target skipped above (at preflight OR the pre-dispatch recheck) must fail the
+# whole broadcast, not vanish.
 overall="$skipped_any"
+[ "${#became_unsafe[@]}" -eq 0 ] || overall=1
 for e in "${pids[@]}"; do
   jp="${e%%:*}"; pane="${e#*:}"
   if wait "$jp"; then echo "$pane: reply ready"

@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.15.0
+  version: 1.16.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -253,13 +253,6 @@ if [ -z "${here:-}" ]; then
     [ -f "$cand/preflight_send.py" ] && { here="$cand"; break; }
   done
 fi
-# FAIL-CLOSED preflight — same enum-validated check broadcast.sh runs. Refuse to
-# send into a working (rc 2), blocked (rc 3), or unverifiable/off-enum (rc 4)
-# pane; only idle/done/unknown (rc 0) is safe. Skipping this let a task be typed
-# into a blocked trust dialog and still report success.
-python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
-  || { echo "Error: $pane_id is not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
-
 baseline_file="$(mktemp)"
 herdr pane read "$pane_id" --source recent-unwrapped --lines 80 >"$baseline_file" \
   || { echo "Error: could not capture baseline for $pane_id" >&2; exit 1; }
@@ -269,7 +262,15 @@ completion_marker="HERDR_DONE_$marker_suffix"
 task="summarize the changes in src/
 
 After fully finishing, concatenate and print these two parts without spaces: HERDR_DONE_ and $marker_suffix"
-herdr pane run "$pane_id" "$task" || { echo "Error: send failed for $pane_id" >&2; exit 1; }
+# FAIL-CLOSED preflight IMMEDIATELY before dispatch — same enum-validated check
+# broadcast.sh runs right before each pane run. Refuse to send into a working
+# (rc 2), blocked (rc 3), or unverifiable/off-enum (rc 4) pane; only idle/done/
+# unknown (rc 0) is safe. Placed here (not before baseline/marker prep) so a
+# target that turns working/blocked during that prep can't still be sent into —
+# skipping it let a task be typed into a blocked trust dialog and report success.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id is not safe to send to (preflight failed) — see stderr" >&2; rm -f "$baseline_file"; exit 1; }
+herdr pane run "$pane_id" "$task" || { echo "Error: send failed for $pane_id" >&2; rm -f "$baseline_file"; exit 1; }
 
 # by name (literal, no Enter): herdr agent send reviewer "…"; then
 # herdr pane send-keys "$pane_id" enter
@@ -357,17 +358,7 @@ Optional helper when status stays `unknown` (no integration / undetected CLI): `
 
 ## Phase 6: Continue, Broadcast, or Tear Down
 
-**Continue (steer):** focus if the human wants the live TUI, or keep messaging from the CLI:
-
-```bash
-herdr agent focus reviewer          # jump UI to that agent
-# Preflight EVERY follow-up too: the pane may have gone working/blocked/
-# unverifiable since the last reply (Phase 4 resolved $here).
-python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
-  || { echo "Error: $pane_id not safe for follow-up (preflight failed) — see stderr" >&2; exit 1; }
-herdr pane run "$pane_id" "Also check the failing test." || { echo "send failed for $pane_id" >&2; exit 1; }
-# then Phase 5 again
-```
+**Continue (steer):** optionally `herdr agent focus reviewer` for the live TUI, then keep messaging from the CLI. A follow-up is a **brand-new send — re-run the entire Phase 4→5 workflow for it**, not a bare `pane run`. Every follow-up needs its own **fresh `$baseline_file`** (Phase 5 deleted the previous one) and **fresh `$completion_marker`** (the prior joined marker is already in the transcript and would falsely satisfy this wait), plus the Phase 4 preflight immediately before its `pane run` and the Phase 5 wait afterward. Reusing the deleted baseline or stale marker makes the follow-up's completion unprovable.
 
 **Broadcast to a fleet:** send to every target first, then wait concurrently:
 

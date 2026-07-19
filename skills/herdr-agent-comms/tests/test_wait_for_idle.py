@@ -44,10 +44,12 @@ class FakeHerdrHarness:
         with open(self.state_path, encoding="utf-8") as f:
             return json.load(f)
 
-    def set_pane(self, pane_id, status, text, name=None, fail_get=False, fail_get_after=None):
+    def set_pane(self, pane_id, status, text, name=None, fail_get=False,
+                 fail_get_after=None, null_pane_get=False):
         state = self.read_state()
         state["panes"][pane_id] = {
             "agent_status": status, "text": text, "name": name, "fail_get": fail_get,
+            "null_pane_get": null_pane_get,
         }
         if fail_get_after is not None:
             # pane get succeeds fail_get_after times, then fails every call after.
@@ -342,6 +344,29 @@ class WaitForIdleMarkerSemanticsTests(unittest.TestCase):
         cp = self.h.run_waiter(
             "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "3"
         )
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_null_pane_get_is_unverifiable_not_crash(self):
+        """Regression (round 12 note): a valid-JSON 0-exit `pane get` with a
+        null `pane` ({"result":{"pane":null}}) must be treated as unverifiable
+        (rc 1 under --ready), NOT raise AttributeError from `None.get(...)`.
+        A traceback on stderr and a crash exit code is the buggy behavior."""
+        self.h.set_pane("p1", "idle", "boot\n", name="nullpane", null_pane_get=True)
+        cp = self.h.run_waiter("p1", "--ready", "--timeout", "2")
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+        self.assertNotIn("Traceback", cp.stderr)
+        self.assertNotIn("AttributeError", cp.stderr)
+
+    def test_resolve_pane_null_pane_does_not_crash(self):
+        """Regression (round 12): a `w..:..` pane id whose `herdr pane get`
+        returns {"result":{"pane":null}} must NOT crash resolve_pane with an
+        uncaught TypeError (None["pane_id"]). It falls through to `agent get`,
+        resolves, and the subsequent null-pane status read is unverifiable
+        (rc 1 under --ready) — never a traceback."""
+        self.h.set_pane("w1:p1", "idle", "boot\n", name="nullres", null_pane_get=True)
+        cp = self.h.run_waiter("w1:p1", "--ready", "--timeout", "2")
+        self.assertNotIn("Traceback", cp.stderr, msg=f"stderr={cp.stderr!r}")
+        self.assertNotIn("TypeError", cp.stderr)
         self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
 
     def test_empty_string_status_is_unverifiable(self):

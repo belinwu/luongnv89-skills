@@ -60,8 +60,11 @@ def resolve_pane(target: str) -> str:
         if cp.returncode == 0:
             try:
                 d = json.loads(cp.stdout)
+                # A null/non-object `pane` (e.g. {"result":{"pane":null}}) makes
+                # the subscript raise TypeError — catch it and fall through to
+                # the `agent get` path rather than crash with a traceback.
                 return d["result"]["pane"]["pane_id"]
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
     cp = run(["herdr", "agent", "get", target])
@@ -72,7 +75,7 @@ def resolve_pane(target: str) -> str:
             pane = agent.get("pane_id")
             if pane:
                 return pane
-        except (json.JSONDecodeError, AttributeError, KeyError):
+        except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
             pass
 
     cp = run(["herdr", "agent", "list"])
@@ -140,7 +143,12 @@ def agent_status(pane_id: str) -> str:
         return LOOKUP_FAILED
     try:
         pane = json.loads(cp.stdout)["result"]["pane"]
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return LOOKUP_FAILED
+    # A valid JSON body can still carry a null / non-object `pane` (e.g.
+    # {"result": {"pane": null}}); calling .get() on that raises AttributeError.
+    # Treat a non-mapping pane as unverifiable rather than crashing.
+    if not isinstance(pane, dict):
         return LOOKUP_FAILED
     return normalize_status(pane.get("agent_status"))
 

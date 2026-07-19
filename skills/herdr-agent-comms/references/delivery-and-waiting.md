@@ -112,7 +112,11 @@ esac
 
 # Manual alternative: poll pane get for idle|done|blocked. FAIL-CLOSED status
 # read — a failed/malformed `herdr pane get` errors out rather than sleeping.
-deadline=$((SECONDS + 180))
+# Track the OUTCOME and propagate it: `blocked` must exit 3 and deadline
+# exhaustion must exit 2. Breaking out silently (or letting the while condition
+# lapse) would fall through with status 0 — reporting a blocked/timed-out wait
+# as a successful completion.
+deadline=$((SECONDS + 180)); settled=""
 while (( SECONDS < deadline )); do
   out=$(herdr pane get "$pane" 2>/dev/null) || { echo "status lookup failed for $pane" >&2; exit 1; }
   st=$(printf '%s' "$out" | python3 -c 'import sys,json
@@ -122,13 +126,15 @@ except Exception: sys.exit(1)
 print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))') \
     || { echo "status parse failed / off-enum for $pane" >&2; exit 1; }
   case "$st" in
-    done|idle) break ;;
-    blocked) echo blocked; break ;;
+    done|idle) settled="$st"; break ;;
+    blocked) echo "$pane: BLOCKED — a human must answer a dialog" >&2; exit 3 ;;
     working) herdr wait agent-status "$pane" --status done --timeout 15000 \
                || herdr wait agent-status "$pane" --status idle --timeout 15000 || true ;;
     *) sleep 2 ;;
   esac
 done
+[ -n "$settled" ] || { echo "$pane: TIMEOUT before completion" >&2; exit 2; }
+echo "settled:$settled"
 ```
 
 `scripts/wait_for_idle.py` defaults to **post-send** semantics. Capture `--baseline-file` before send and arrange `--completion-marker`; this closes both races: a fast reply cannot become the baseline, and stable prompt echo cannot look complete. Without a marker, content stability remains a legacy heuristic fallback. Use `--ready` only for boot waits.
