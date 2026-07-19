@@ -100,6 +100,10 @@ def _unwrap_layout(data: dict) -> dict:
     """Return the inner `layout` object regardless of whether `data` is the
     raw CLI envelope (`{"result": {"layout": {...}}}`), a `{"layout": {...}}`
     fixture, or the layout dict itself."""
+    # A top-level `null` (or any non-object) parses to a non-dict here; calling
+    # .get() on it would raise an uncaught AttributeError. Reject cleanly.
+    if not isinstance(data, dict):
+        raise SystemExit("layout JSON is not an object")
     node = data.get("result", data)
     if isinstance(node, dict) and "layout" in node:
         node = node["layout"]
@@ -113,6 +117,12 @@ def panes_from_layout(data: dict) -> list[dict]:
     panes = layout.get("panes")
     if not isinstance(panes, list) or not panes:
         raise SystemExit("layout JSON has no panes")
+    # A null / non-object element (e.g. `panes: [null]`) would crash every
+    # `pane.get(...)` downstream with an uncaught AttributeError. Validate the
+    # element shape here, once, so callers get a clean SystemExit instead.
+    for i, pane in enumerate(panes):
+        if not isinstance(pane, dict):
+            raise SystemExit(f"layout JSON pane #{i} is not an object")
     return panes
 
 
@@ -209,6 +219,12 @@ def _ordered_columns(panes: list[dict]) -> tuple[list[str], list[float]]:
     """
     ordered: list[tuple[float, str, float]] = []
     for pane in panes:
+        if not isinstance(pane, dict):
+            # A null / non-object element (e.g. `panes: [null]`) — treat as a
+            # layout-shape error, not an uncaught AttributeError. Callers going
+            # through panes_from_layout are pre-validated; this guards direct
+            # callers (e.g. plan_next_split) too.
+            raise SystemExit("layout contains a non-object pane entry")
         pane_id = pane.get("pane_id")
         rect = pane.get("rect") or {}
         try:

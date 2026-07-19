@@ -27,6 +27,7 @@ from next_grid_split import (  # noqa: E402
     area_width_from_layout,
     boundary_resize_op,
     equal_targets,
+    panes_from_layout,
     plan_next_split,
     require_root_membership,
     split_ratio,
@@ -109,6 +110,38 @@ class PlanNextSplitTests(unittest.TestCase):
         rightmost, new_count = plan_next_split(layout, "root")
         self.assertEqual(rightmost, "root")
         self.assertEqual(new_count, 2)
+
+
+class MalformedLayoutJsonTests(unittest.TestCase):
+    """Round 14 note: malformed-but-valid JSON must yield a clean SystemExit
+    validation error, NOT an uncaught AttributeError traceback."""
+
+    def test_top_level_null_is_clean_error(self):
+        # json.load of "null" is None; .get() on it would crash.
+        with self.assertRaises(SystemExit):
+            panes_from_layout(None)
+
+    def test_top_level_list_is_clean_error(self):
+        with self.assertRaises(SystemExit):
+            panes_from_layout([1, 2, 3])
+
+    def test_panes_with_null_element_is_clean_error(self):
+        # `panes: [null]` — the null element would crash every pane.get(...).
+        with self.assertRaises(SystemExit):
+            panes_from_layout({"layout": {"panes": [None]}})
+
+    def test_panes_with_non_object_element_is_clean_error(self):
+        with self.assertRaises(SystemExit):
+            panes_from_layout({"layout": {"panes": ["not-a-pane"]}})
+
+    def test_null_element_via_validate_single_row_is_clean_error(self):
+        with self.assertRaises(SystemExit):
+            validate_single_row({"layout": {"area": {"x": 0, "y": 0, "width": 100, "height": 10},
+                                            "panes": [None]}})
+
+    def test_null_element_via_plan_next_split_is_clean_error(self):
+        with self.assertRaises(SystemExit):
+            plan_next_split([None], "root")
 
 
 class RequireRootMembershipTests(unittest.TestCase):

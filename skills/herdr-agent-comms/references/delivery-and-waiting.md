@@ -85,8 +85,11 @@ Both mean "not working anymore." After a task:
 
 Orchestrator pattern — **accept either terminal state**; do not spend the whole budget on `done` alone (focused tabs finish as `idle`):
 
+Pick **exactly one** of the two waiters below — they are mutually exclusive, not sequential. Both consume the pre-send `$baseline` + `$completion_marker`; whichever you run owns the `$baseline` cleanup, so the other must not have deleted it first.
+
+**Preferred — the helper** (post-send semantics; the pre-send baseline closes the fast-completion race):
+
 ```bash
-# Preferred helper. The pre-send baseline closes the fast-completion race.
 # $here = scripts/ dir; probe install locations, don't derive from $0/BASH_SOURCE.
 # Repo-local copies win over global installs; fail fast if none resolve:
 #   for cand in "skills/herdr-agent-comms/scripts" \
@@ -100,32 +103,29 @@ Orchestrator pattern — **accept either terminal state**; do not spend the whol
 python3 "$here/wait_for_idle.py" "$pane" --timeout 180 --lines 80 \
   --baseline-file "$baseline" --completion-marker "$completion_marker"
 rc=$?               # capture BEFORE cleanup — `rm` would clobber $?
-rm -f "$baseline"
+rm -f "$baseline"   # this path is done with the baseline now
 # Act on the waiter's exit and PROPAGATE it — 0 done/idle, 1 error, 2 timeout,
-# 3 blocked. Any non-zero means no delivered reply; exit non-zero, don't fall
-# through to the manual poll as if the wait had succeeded.
+# 3 blocked. Any non-zero means no delivered reply.
 case "$rc" in
-  0) : ;;
+  0) echo "settled" ;;
   3) echo "$pane: BLOCKED — a human must answer a dialog" >&2; exit 3 ;;
   2) echo "$pane: TIMEOUT before completion" >&2; exit 2 ;;
   *) echo "$pane: waiter failed (rc $rc)" >&2; exit "$rc" ;;
 esac
+```
 
-# Helper-free alternative (no wait_for_idle.py). A hand-rolled `pane get` poll
-# must NOT accept the first idle/done it sees: a pane idle BEFORE the task
-# started (send not yet landed, or a prior fast task) would be a FALSE
-# completion for THIS send. Gate acceptance on having first observed `working`
-# (or a fresh completion marker absent from the pre-send baseline). Track the
-# outcome and propagate it: `blocked` exits 3, deadline exhaustion exits 2.
-deadline=$((SECONDS + 180)); settled=""; saw_working=""
+**OR — helper-free** (no `wait_for_idle.py`; run this INSTEAD of the block above, so the baseline still exists). A hand-rolled `pane get` poll must NOT accept the first idle/done it sees: a pane idle BEFORE the task started (send not yet landed, or a prior fast task) would be a FALSE completion for THIS send. Gate acceptance on having first observed `working` (or a fresh completion marker absent from the pre-send baseline); `blocked` exits 3, deadline exhaustion exits 2. A single `rm -f "$baseline"` runs after the loop, on every exit path:
+
+```bash
+deadline=$((SECONDS + 180)); settled=""; saw_working=""; rc=0
 while (( SECONDS < deadline )); do
-  out=$(herdr pane get "$pane" 2>/dev/null) || { echo "status lookup failed for $pane" >&2; exit 1; }
+  out=$(herdr pane get "$pane" 2>/dev/null) || { echo "status lookup failed for $pane" >&2; rc=1; break; }
   st=$(printf '%s' "$out" | python3 -c 'import sys,json
 V={"idle","working","blocked","done","unknown"}
 try: r=json.load(sys.stdin)["result"]["pane"].get("agent_status")
 except Exception: sys.exit(1)
 print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))') \
-    || { echo "status parse failed / off-enum for $pane" >&2; exit 1; }
+    || { echo "status parse failed / off-enum for $pane" >&2; rc=1; break; }
   # A fresh joined marker in the transcript (not in the baseline) also proves
   # completion even if we never caught the `working` window.
   if grep -qF "$completion_marker" <(herdr pane read "$pane" --source recent-unwrapped --lines 80 2>/dev/null) \
@@ -138,11 +138,12 @@ print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exi
                || herdr wait agent-status "$pane" --status idle --timeout 15000 || true ;;
     done|idle) [ -n "$saw_working" ] && { settled="$st"; break; }  # else pre-task idle: keep waiting
                sleep 2 ;;
-    blocked) echo "$pane: BLOCKED — a human must answer a dialog" >&2; rm -f "$baseline"; exit 3 ;;
+    blocked) echo "$pane: BLOCKED — a human must answer a dialog" >&2; rc=3; break ;;
     *) sleep 2 ;;
   esac
 done
-rm -f "$baseline"
+rm -f "$baseline"   # single cleanup, reached on every exit path
+[ "$rc" -eq 0 ] || exit "$rc"
 [ -n "$settled" ] || { echo "$pane: TIMEOUT before completion (never saw working / fresh marker)" >&2; exit 2; }
 echo "settled:$settled"
 ```
