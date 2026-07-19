@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -73,6 +74,30 @@ EQUAL_TOLERANCE_CELLS = 1
 # Safety cap so a pathological layout can't loop forever. The sweep is a
 # contraction; real layouts converge in ~5 passes.
 MAX_EQUALIZE_PASSES = 12
+
+
+def _finite_float(value: object, label: str, *, positive: bool = False) -> float:
+    """Convert `value` to a float that is guaranteed FINITE (and, for
+    dimensions, strictly positive).
+
+    Every geometry coordinate/dimension routes through here. `json.loads`
+    accepts `NaN`/`Infinity` by default, and a non-finite value silently defeats
+    every downstream comparison: `nan <= 0`, `nan > tol`, `abs(nan - x) > tol`
+    are all False, so a NaN width/coord would sail past the positive-width and
+    single-row checks and drive a bogus resize. Reject it here instead.
+
+    `positive=True` for dimensions (width/height); coordinates (x/y) may be 0
+    or negative, they just must be finite.
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError) as e:
+        raise SystemExit(f"{label} is not numeric: {value!r}") from e
+    if not math.isfinite(f):
+        raise SystemExit(f"{label} is not finite: {value!r}")
+    if positive and f <= 0:
+        raise SystemExit(f"{label} must be positive: {f:g}")
+    return f
 
 
 def load_layout(root_pane: str | None, layout_json: str | None) -> dict:
@@ -129,10 +154,12 @@ def panes_from_layout(data: dict) -> list[dict]:
 def area_width_from_layout(data: dict) -> float:
     layout = _unwrap_layout(data)
     area = layout.get("area") or {}
-    try:
-        width = float(area.get("width", 0))
-    except (TypeError, ValueError):
-        width = 0.0
+    raw = area.get("width", 0)
+    # A PRESENT area width must be finite: NaN/inf would defeat the `<= 0`
+    # fallback trigger AND the `<= 0` error below, returning a poisoned width.
+    # (An absent width reads 0 → finite → falls through to the summed-pane
+    # fallback, which is unchanged.)
+    width = _finite_float(raw, "area width")
     if width <= 0:
         # Fall back to the summed pane widths so fixtures without an explicit
         # area still work.
@@ -162,11 +189,12 @@ def validate_single_row(data: dict, tolerance: int = 1) -> None:
             "layout has no 'area' rect; cannot validate a single-row column "
             "grid (refusing to split/equalize a layout of unknown shape)"
         )
-    try:
-        ax = float(area["x"]); ay = float(area["y"])
-        aw = float(area["width"]); ah = float(area["height"])
-    except (KeyError, TypeError, ValueError) as e:
-        raise SystemExit(f"layout 'area' rect missing x/y/width/height: {e}") from e
+    for k in ("x", "y", "width", "height"):
+        if k not in area:
+            raise SystemExit(f"layout 'area' rect missing {k}")
+    ax = _finite_float(area["x"], "area x"); ay = _finite_float(area["y"], "area y")
+    aw = _finite_float(area["width"], "area width", positive=True)
+    ah = _finite_float(area["height"], "area height", positive=True)
 
     panes = panes_from_layout(data)
     # Reject missing / non-string / empty / duplicate pane ids up front — a
@@ -179,11 +207,12 @@ def validate_single_row(data: dict, tolerance: int = 1) -> None:
         rect = pane.get("rect")
         if not isinstance(rect, dict):
             raise SystemExit(f"pane {pid!r} has no rect; cannot validate layout shape")
-        try:
-            x = float(rect["x"]); y = float(rect["y"])
-            w = float(rect["width"]); h = float(rect["height"])
-        except (KeyError, TypeError, ValueError) as e:
-            raise SystemExit(f"pane {pid!r} rect missing x/y/width/height: {e}") from e
+        for k in ("x", "y", "width", "height"):
+            if k not in rect:
+                raise SystemExit(f"pane {pid!r} rect missing {k}")
+        x = _finite_float(rect["x"], f"pane {pid!r} x"); y = _finite_float(rect["y"], f"pane {pid!r} y")
+        w = _finite_float(rect["width"], f"pane {pid!r} width", positive=True)
+        h = _finite_float(rect["height"], f"pane {pid!r} height", positive=True)
         rects.append((x, y, w, h, str(pid)))
 
     # Every pane must be a full-height column, top-aligned with the area.
@@ -255,13 +284,10 @@ def _ordered_columns(panes: list[dict]) -> tuple[list[str], list[float]]:
             raise SystemExit(f"pane {pane_id!r} has no rect object; cannot order columns")
         if "x" not in rect or "width" not in rect:
             raise SystemExit(f"pane {pane_id!r} rect is missing x/width")
-        try:
-            x = float(rect["x"])
-            width = float(rect["width"])
-        except (TypeError, ValueError) as e:
-            raise SystemExit(f"pane {pane_id!r} rect x/width is not numeric: {e}") from e
-        if width <= 0:
-            raise SystemExit(f"pane {pane_id!r} has non-positive width {width:g}")
+        # _finite_float rejects NaN/inf (which would defeat the width>0 check and
+        # the ordering sort) and, with positive=True, non-positive width.
+        x = _finite_float(rect["x"], f"pane {pane_id!r} x")
+        width = _finite_float(rect["width"], f"pane {pane_id!r} width", positive=True)
         ordered.append((x, pane_id, width))
     if not ordered:
         raise SystemExit("no usable pane rects in layout")
@@ -362,6 +388,23 @@ def _run_herdr(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["herdr", *args], text=True, capture_output=True, check=False)
 
 
+def validate_live_layout(data: dict, root_pane: str | None) -> tuple[list[str], list[float]]:
+    """FULL validation of one live layout read, centralized so EVERY re-read
+    (initial, each pass, each boundary, and the final convergence check) applies
+    the SAME checks — shape (single clean row of full-height columns, finite
+    geometry) AND root membership. Omitting either on any re-read is a hole:
+    the post-cap convergence check used to run only `_ordered_columns`, so a
+    final stacked/gapped layout with coincidentally-equal widths returned
+    success, and rereads never reconfirmed the root was still present.
+
+    Returns the ordered (ids, widths) so callers don't re-parse.
+    """
+    validate_single_row(data)
+    ids, widths = _ordered_columns(panes_from_layout(data))
+    require_root_membership(ids, root_pane)
+    return ids, widths
+
+
 def equalize_live(root_pane: str | None) -> int:
     """Drive the iterative boundary equalizer against a live herdr server.
 
@@ -372,22 +415,18 @@ def equalize_live(root_pane: str | None) -> int:
     if not shutil.which("herdr"):
         raise SystemExit("herdr not on PATH")
 
-    # Reject 2D / stacked layouts BEFORE any resize — mutating a layout the
-    # column model misreads would scramble the panes.
+    # Reject 2D / stacked layouts (and a missing root) BEFORE any resize —
+    # mutating a layout the column model misreads would scramble the panes.
     initial = load_layout(root_pane, None)
-    validate_single_row(initial)
-    # And refuse to equalize a tab the requested root isn't even part of.
-    require_root_membership(_ordered_columns(panes_from_layout(initial))[0], root_pane)
+    validate_live_layout(initial, root_pane)
 
     for _ in range(MAX_EQUALIZE_PASSES):
         data = load_layout(root_pane, None)
-        # Revalidate the FULL shape on every live re-read, not just once up
-        # front: a resize (or an external client) could turn the tab into a
-        # 2D/stacked or gappy layout mid-equalize, and computing resize ops for
-        # that would scramble the panes. `_ordered_columns` guarantees per-pane
-        # geometry; `validate_single_row` guarantees the row is still clean.
-        validate_single_row(data)
-        ids, widths = _ordered_columns(panes_from_layout(data))
+        # FULL revalidation on every live re-read (shape + root membership), not
+        # just once up front: a resize or an external client could turn the tab
+        # into a 2D/stacked/gappy layout, or drop the root, mid-equalize — and
+        # computing resize ops for that would scramble the panes.
+        ids, widths = validate_live_layout(data, root_pane)
         area = area_width_from_layout(data)
         n = len(ids)
         if n < 2:
@@ -399,10 +438,9 @@ def equalize_live(root_pane: str | None) -> int:
         for boundary in range(n - 1):
             # Re-read after each resize: one resize shifts every column to the
             # right of the moved boundary, so later ops in this pass need the
-            # updated widths to aim correctly. Revalidate the shape each time too.
+            # updated widths to aim correctly. FULL revalidation each time too.
             data = load_layout(root_pane, None)
-            validate_single_row(data)
-            ids, widths = _ordered_columns(panes_from_layout(data))
+            ids, widths = validate_live_layout(data, root_pane)
             area = area_width_from_layout(data)
             targets = equal_targets(len(ids), area)
             if boundary >= len(ids) - 1:
@@ -429,10 +467,13 @@ def equalize_live(root_pane: str | None) -> int:
                     f"`herdr pane layout --pane {root_pane or '--current'}`."
                 )
 
-    # Final check after the cap. Non-convergence is also a hard error — do
-    # not report "best-effort" and let the caller proceed onto an unequal grid.
+    # Final check after the cap. FULL validation here too — the convergence
+    # check previously ran only `_ordered_columns`, so a final stacked/gapped
+    # layout (or one that lost the root) with coincidentally-equal widths would
+    # return success. Non-convergence is also a hard error — do not report
+    # "best-effort" and let the caller proceed onto an unequal grid.
     data = load_layout(root_pane, None)
-    _, widths = _ordered_columns(panes_from_layout(data))
+    _, widths = validate_live_layout(data, root_pane)
     spread = max(widths) - min(widths)
     if spread <= EQUAL_TOLERANCE_CELLS:
         return 0
@@ -473,9 +514,11 @@ def main() -> int:
 
     try:
         data = load_layout(args.root_pane, args.layout_json)
-        # Refuse to plan a split into a 2D / stacked layout — the "rightmost
-        # column" target is ambiguous there and the caller would split blindly.
-        validate_single_row(data)
+        # FULL validation (shape + finite geometry + root membership) before
+        # planning — the "rightmost column" target is ambiguous in a 2D/stacked
+        # layout and the caller would split blindly. Same centralized check the
+        # equalizer uses on every re-read.
+        validate_live_layout(data, args.root_pane)
         rightmost, new_count = plan_next_split(panes_from_layout(data), args.root_pane)
     except (OSError, json.JSONDecodeError, SystemExit) as e:
         print(f"Error: {e}", file=sys.stderr)

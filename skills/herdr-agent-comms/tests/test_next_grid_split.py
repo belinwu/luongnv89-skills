@@ -17,6 +17,8 @@ outermost-first grow sweep is a contraction (converges to equal width).
 
 from __future__ import annotations
 
+import json
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -31,6 +33,7 @@ from next_grid_split import (  # noqa: E402
     plan_next_split,
     require_root_membership,
     split_ratio,
+    validate_live_layout,
     validate_single_row,
 )
 
@@ -234,6 +237,110 @@ class PaneGeometryValidationTests(unittest.TestCase):
         rightmost, new_count = self._split({"x": 50, "width": 50})
         self.assertEqual(rightmost, "b")
         self.assertEqual(new_count, 3)
+
+
+class NonFiniteGeometryTests(unittest.TestCase):
+    """Round 17 finding #1: NaN/inf pass float() but defeat every comparison
+    (`nan <= 0`, `nan > tol` are all False), so non-finite geometry would sail
+    past the positive-width and single-row checks. `json.loads` accepts
+    NaN/Infinity by default, so this is reachable, not theoretical. Every
+    coordinate/dimension must be finite (dimensions also strictly positive)."""
+
+    def _split(self, second_rect):
+        return plan_next_split(
+            [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+             {"pane_id": "b", "rect": second_rect}],
+            None,
+        )
+
+    def test_nan_width_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": 50, "width": float("nan")})
+
+    def test_inf_width_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": 50, "width": float("inf")})
+
+    def test_nan_x_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": float("nan"), "width": 50})
+
+    def test_inf_x_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": float("-inf"), "width": 50})
+
+    def test_nan_area_width_raises(self):
+        # A present-but-NaN area width must be a hard error, not skip the
+        # <=0 fallback trigger and return a poisoned width.
+        with self.assertRaises(SystemExit):
+            area_width_from_layout({"layout": {
+                "area": {"width": float("nan")},
+                "panes": [{"pane_id": "a", "rect": {"x": 0, "width": 50}}],
+            }})
+
+    def test_nan_area_coord_in_single_row_raises(self):
+        with self.assertRaises(SystemExit):
+            validate_single_row(full_rect_layout(
+                (0, float("nan"), 100, 10),
+                ("a", 0, 0, 50, 10), ("b", 50, 0, 50, 10)))
+
+    def test_inf_pane_height_in_single_row_raises(self):
+        with self.assertRaises(SystemExit):
+            validate_single_row(full_rect_layout(
+                (0, 0, 100, 10),
+                ("a", 0, 0, 50, float("inf")), ("b", 50, 0, 50, 10)))
+
+    def test_nan_json_roundtrips_to_float_nan(self):
+        # Sanity: the real JSON path can carry NaN, so float('nan') fixtures
+        # faithfully represent it.
+        self.assertTrue(math.isnan(json.loads('{"w": NaN}')["w"]))
+
+
+class ValidateLiveLayoutTests(unittest.TestCase):
+    """Round 17 finding #2: the centralized live-layout validator must enforce
+    BOTH shape (single clean row) AND root membership. The discriminating case:
+    a stacked/gapped layout with coincidentally-equal widths + a valid root must
+    RAISE — the old final convergence check ran only `_ordered_columns` and
+    returned success on exactly this."""
+
+    def test_stacked_layout_with_equal_widths_raises(self):
+        # Two panes, equal widths, but STACKED (same x, split vertically) —
+        # widths are "equal" yet this is a 2D layout, not a row of columns.
+        stacked = full_rect_layout(
+            (0, 0, 100, 20),
+            ("a", 0, 0, 100, 10), ("b", 0, 10, 100, 10))
+        with self.assertRaises(SystemExit):
+            validate_live_layout(stacked, "a")
+
+    def test_gapped_layout_with_equal_widths_raises(self):
+        # Equal widths but a gap between columns (b starts at 60, not 50).
+        gapped = full_rect_layout(
+            (0, 0, 110, 10),
+            ("a", 0, 0, 50, 10), ("b", 60, 0, 50, 10))
+        with self.assertRaises(SystemExit):
+            validate_live_layout(gapped, "a")
+
+    def test_clean_row_but_root_absent_raises(self):
+        clean = full_rect_layout(
+            (0, 0, 100, 10),
+            ("a", 0, 0, 50, 10), ("b", 50, 0, 50, 10))
+        with self.assertRaises(SystemExit):
+            validate_live_layout(clean, "not-here")
+
+    def test_clean_row_with_present_root_passes(self):
+        clean = full_rect_layout(
+            (0, 0, 100, 10),
+            ("a", 0, 0, 50, 10), ("b", 50, 0, 50, 10))
+        ids, widths = validate_live_layout(clean, "a")
+        self.assertEqual(ids, ["a", "b"])
+        self.assertEqual(widths, [50, 50])
+
+    def test_clean_row_none_root_passes(self):
+        clean = full_rect_layout(
+            (0, 0, 100, 10),
+            ("a", 0, 0, 50, 10), ("b", 50, 0, 50, 10))
+        ids, _ = validate_live_layout(clean, None)
+        self.assertEqual(ids, ["a", "b"])
 
 
 class MalformedLayoutJsonTests(unittest.TestCase):
