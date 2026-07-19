@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.9.0
+  version: 1.10.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -247,7 +247,8 @@ Capture the transcript **before sending**. This lets Phase 5 recognize a fast re
 
 ```bash
 baseline_file="$(mktemp)"
-herdr pane read "$pane_id" --source recent-unwrapped --lines 80 >"$baseline_file"
+herdr pane read "$pane_id" --source recent-unwrapped --lines 80 >"$baseline_file" \
+  || { echo "Error: could not capture baseline for $pane_id" >&2; exit 1; }
 marker_suffix="$(date +%s)_$$_$RANDOM"
 completion_marker="HERDR_DONE_$marker_suffix"
 
@@ -269,10 +270,17 @@ herdr pane run "$pane_id" "$task"
 ```bash
 if herdr wait agent-status "$pane_id" --status working --timeout 15000; then
   echo delivered
-elif ! cmp -s "$baseline_file" <(herdr pane read "$pane_id" --source recent-unwrapped --lines 80); then
-  echo delivered-transcript-activity
 else
-  echo NOT-DELIVERED
+  # Capture the post-send read EXPLICITLY and check it succeeded — a failed
+  # `herdr pane read` in a `<(...)` would look "different from baseline" and
+  # be misreported as activity. A failed read is an error, not delivery.
+  after="$(herdr pane read "$pane_id" --source recent-unwrapped --lines 80)" \
+    || { echo "Error: post-send pane read failed for $pane_id" >&2; exit 1; }
+  if ! printf '%s' "$after" | cmp -s "$baseline_file" -; then
+    echo delivered-transcript-activity
+  else
+    echo NOT-DELIVERED
+  fi
 fi
 ```
 

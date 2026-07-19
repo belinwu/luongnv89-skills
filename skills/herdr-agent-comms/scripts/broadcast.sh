@@ -58,13 +58,21 @@ except Exception:
 }
 
 pane_status() {
-  herdr pane get "$1" 2>/dev/null | python3 -c '
+  # Print the pane's agent_status and return 0 ONLY when the lookup+parse
+  # actually succeeded. A failed `herdr pane get` or malformed JSON must
+  # return non-zero (NOT an empty "safe" status) so the caller can reject the
+  # target instead of sending into an unverifiable pane. A validly-absent
+  # status field prints "unknown" (non-integrated CLIs report that normally).
+  local out
+  out="$(herdr pane get "$1" 2>/dev/null)" || return 1
+  printf '%s' "$out" | python3 -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
-    print(d["result"]["pane"].get("agent_status", ""))
+    pane = d["result"]["pane"]
 except Exception:
-    print("")
+    sys.exit(1)   # lookup/parse failure — NOT a safe empty status
+print(pane.get("agent_status") or "unknown")
 '
 }
 
@@ -110,10 +118,17 @@ fi
 # Skip both rather than risk a false "settled" report or a swallowed dialog.
 busy=()
 blocked=()
+unverifiable=()
 ready_panes=()
 ready_labels=()
 for i in "${!panes[@]}"; do
-  st="$(pane_status "${panes[$i]}")"
+  # A failed status lookup must NOT fall through as "safe to send" — reject
+  # the target rather than risk sending into a working/blocked pane whose
+  # state we couldn't confirm.
+  if ! st="$(pane_status "${panes[$i]}")"; then
+    unverifiable+=("${labels[$i]} (${panes[$i]})")
+    continue
+  fi
   if [ "$st" = "working" ]; then
     busy+=("${labels[$i]} (${panes[$i]})")
     continue
@@ -122,6 +137,7 @@ for i in "${!panes[@]}"; do
     blocked+=("${labels[$i]} (${panes[$i]})")
     continue
   fi
+  # idle / done / unknown (validly reported) are sendable.
   ready_panes+=("${panes[$i]}")
   ready_labels+=("${labels[$i]}")
 done
@@ -132,6 +148,10 @@ fi
 if [ "${#blocked[@]}" -gt 0 ]; then
   echo "Error: these targets are blocked (trust/auth dialog) and were skipped: ${blocked[*]}" >&2
   echo "A human must answer the dialog first — see: herdr agent focus <name>." >&2
+fi
+if [ "${#unverifiable[@]}" -gt 0 ]; then
+  echo "Error: could not verify status for these targets (lookup/parse failed) and skipped them: ${unverifiable[*]}" >&2
+  echo "Refusing to send into a pane whose working/blocked state is unknown — check 'herdr pane get <id>'." >&2
 fi
 panes=("${ready_panes[@]+"${ready_panes[@]}"}")
 labels=("${ready_labels[@]+"${ready_labels[@]}"}")

@@ -28,6 +28,7 @@ from next_grid_split import (  # noqa: E402
     boundary_resize_op,
     equal_targets,
     plan_next_split,
+    require_root_membership,
     split_ratio,
     validate_single_row,
 )
@@ -79,15 +80,20 @@ class PlanNextSplitTests(unittest.TestCase):
         self.assertEqual(rightmost, "sub2")
         self.assertEqual(new_count, 4)
 
-    def test_missing_root_pane_still_plans_from_layout(self):
+    def test_no_root_requested_still_plans_from_layout(self):
+        # root_pane is None => "no specific root requested", plan normally.
         rightmost, new_count = plan_next_split(panes(("a", 0, 50), ("b", 50, 50)), None)
         self.assertEqual(rightmost, "b")
         self.assertEqual(new_count, 3)
 
-    def test_root_pane_not_in_layout_warns_but_still_plans(self):
-        rightmost, new_count = plan_next_split(
-            panes(("a", 0, 50), ("b", 50, 50)), "missing-root"
-        )
+    def test_requested_root_absent_from_layout_is_hard_error(self):
+        # P4 round 6: a named root that isn't in the layout means we'd be
+        # splitting the WRONG tab — must raise before any mutation, not warn.
+        with self.assertRaises(SystemExit):
+            plan_next_split(panes(("a", 0, 50), ("b", 50, 50)), "missing-root")
+
+    def test_requested_root_present_plans_normally(self):
+        rightmost, new_count = plan_next_split(panes(("a", 0, 50), ("b", 50, 50)), "a")
         self.assertEqual(rightmost, "b")
         self.assertEqual(new_count, 3)
 
@@ -103,6 +109,22 @@ class PlanNextSplitTests(unittest.TestCase):
         rightmost, new_count = plan_next_split(layout, "root")
         self.assertEqual(rightmost, "root")
         self.assertEqual(new_count, 2)
+
+
+class RequireRootMembershipTests(unittest.TestCase):
+    def test_none_root_is_allowed(self):
+        require_root_membership(["a", "b"], None)  # must not raise
+
+    def test_present_root_is_allowed(self):
+        require_root_membership(["a", "b"], "a")
+
+    def test_absent_root_raises(self):
+        with self.assertRaises(SystemExit):
+            require_root_membership(["a", "b"], "missing")
+
+    def test_absent_root_in_empty_layout_raises(self):
+        with self.assertRaises(SystemExit):
+            require_root_membership([], "root")
 
 
 class SplitRatioTests(unittest.TestCase):

@@ -47,13 +47,16 @@ class FakeHerdrHarness:
         with open(self.state_path, encoding="utf-8") as f:
             return json.load(f)
 
-    def set_pane(self, pane_id, status, text, name=None, fail_run=False):
+    def set_pane(self, pane_id, status, text, name=None, fail_run=False,
+                 fail_get=False, malformed_get=False):
         state = self.read_state()
         state["panes"][pane_id] = {
             "agent_status": status,
             "text": text,
             "name": name,
             "fail_run": fail_run,
+            "fail_get": fail_get,
+            "malformed_get": malformed_get,
         }
         self.write_state(state)
 
@@ -181,6 +184,51 @@ class BroadcastDedupeTests(unittest.TestCase):
         cp = self.h.run_broadcast("do the thing", ["gated"], timeout=4)
         self.assertNotEqual(cp.returncode, 0)
         self.assertEqual(self.h.count_pane_run_invocations("dlg1"), 0)
+
+    def test_failed_status_lookup_is_rejected_not_sent(self):
+        """P2 round 6: a pane whose `herdr pane get` FAILS during the status
+        preflight must be rejected, not treated as an empty (safe) status.
+        Otherwise a working/blocked pane whose state can't be confirmed would
+        be sent to (fail-open)."""
+        self.h.set_pane("bad1", "idle", "resolves but status get fails\n",
+                        name="flaky", fail_get=True)
+        cp = self.h.run_broadcast("do the thing", ["flaky"], timeout=4)
+        # never sent, error exit, and the reason is surfaced.
+        self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0,
+                         msg=f"unverifiable pane must not be sent to. stdout={cp.stdout!r}")
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("verify", cp.stderr.lower())
+
+    def test_malformed_status_response_is_rejected_not_sent(self):
+        """A 0-exit but unparseable `herdr pane get` must also be rejected,
+        not fall through as empty/safe."""
+        self.h.set_pane("bad1", "idle", "resolves but status is garbage\n",
+                        name="garbled", malformed_get=True)
+        cp = self.h.run_broadcast("do the thing", ["garbled"], timeout=4)
+        self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0,
+                         msg=f"malformed-status pane must not be sent to. stdout={cp.stdout!r}")
+        self.assertNotEqual(cp.returncode, 0)
+
+    def test_failed_status_lookup_skips_only_bad_target(self):
+        """A verifiable idle pane alongside an unverifiable one: the good pane
+        still gets the message; the bad one is skipped."""
+        self.h.set_pane("bad1", "idle", "status get fails\n", name="flaky", fail_get=True)
+        self.h.set_pane("ok1", "idle", "ready\n", name="ready")
+
+        def finish_ready():
+            time.sleep(0.2)
+            st = self.h.read_state()
+            m = re.search(r"HERDR_DONE_ and (\S+)", st["panes"]["ok1"]["text"])
+            if m:
+                self.h.append_text("ok1", f"HERDR_DONE_{m.group(1)}\n")
+            self.h.set_status("ok1", "idle")
+
+        t = threading.Thread(target=finish_ready)
+        t.start()
+        cp = self.h.run_broadcast("do the thing", ["flaky", "ready"], timeout=6)
+        t.join()
+        self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0)
+        self.assertGreaterEqual(self.h.count_pane_run_invocations("ok1"), 1)
 
 
 class BroadcastPartialFailureTests(unittest.TestCase):

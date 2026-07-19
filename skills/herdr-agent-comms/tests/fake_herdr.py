@@ -85,6 +85,15 @@ def cmd_pane_get(args):
         print(json.dumps({"error": "not found"}))
         return 1
     p = state["panes"][pid]
+    if p.get("fail_get"):
+        # Simulate a failing `herdr pane get` (server hiccup / gone pane):
+        # non-zero exit, so a preflight must reject rather than fall open.
+        print(json.dumps({"error": "simulated pane get failure"}), file=sys.stderr)
+        return 1
+    if p.get("malformed_get"):
+        # Simulate a 0-exit but unparseable/unexpected-shape response.
+        print("not json at all {[")
+        return 0
     print(json.dumps({"result": {"pane": {"pane_id": pid, "agent_status": p["agent_status"]}}}))
     return 0
 

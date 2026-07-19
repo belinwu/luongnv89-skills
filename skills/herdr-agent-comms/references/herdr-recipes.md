@@ -56,10 +56,15 @@ done
 [ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 
 # Canonical guarded spawn: every critical step is checked, the pane id is
-# printed ONLY after a successful launch + readiness, and any failure returns
+# printed ONLY after the launch (`pane run`) succeeds, and any failure returns
 # non-zero (naming the orphan split pane) so the caller can abort. Note the
 # `local` declarations are separate from the assignments — `local pane=$(...)`
 # would mask the substitution's exit status.
+#
+# Readiness is NOT waited on here: a single `wait agent-status idle` would
+# turn a `blocked` boot (trust/auth dialog) into a generic 60s timeout and
+# serialize the fleet. Placement and readiness are separated — see the
+# concurrent readiness pass after all spawns below.
 spawn_sub() {
   local name=$1 cmd=$2
   local plan split_from ratio j pane
@@ -84,13 +89,7 @@ spawn_sub() {
   herdr pane rename "$pane" "$name" >/dev/null || { echo "Error: rename failed; orphan $pane." >&2; return 1; }
   herdr agent rename "$pane" "$name" >/dev/null || { echo "Error: agent rename failed; orphan $pane." >&2; return 1; }
   herdr pane run "$pane" "$cmd" >/dev/null || { echo "Error: launch failed; orphan $pane." >&2; return 1; }
-  # Readiness: treat a boot timeout as failure so the caller doesn't message a
-  # dead pane. (Agents without status integration will time out here — the
-  # orphan is named so it's recoverable; drop this line if you rely on the
-  # content-stability fallback instead.)
-  herdr wait agent-status "$pane" --status idle --timeout 60000 >/dev/null || {
-    echo "Error: '$name' ($pane) not ready within 60s; orphan not confirmed launched." >&2; return 1; }
-  printf '%s\n' "$pane"   # ONLY after everything above succeeded
+  printf '%s\n' "$pane"   # ONLY after the launch above succeeded
 }
 
 # Caller MUST check the status — `$(...)` hides spawn_sub's non-zero exit, so
@@ -99,6 +98,26 @@ spawn_sub() {
 p_reviewer=$(spawn_sub reviewer "pi --thinking medium") || { echo "reviewer failed to place; aborting" >&2; exit 1; }
 p_tests=$(spawn_sub tests "pi --thinking low") || { echo "tests failed to place; aborting" >&2; exit 1; }
 # optional third: p_docs=$(spawn_sub docs "pi --thinking low") || { echo "docs failed; aborting" >&2; exit 1; }
+
+# Concurrent readiness pass — run AFTER all spawns so boot waits overlap.
+# `wait_for_idle.py --ready` returns 0 ready, 2 timeout, 3 BLOCKED — so a
+# trust/auth dialog is surfaced immediately instead of hiding behind a 60s
+# idle timeout (the reason a bare `wait agent-status idle` was wrong here).
+fleet=("$p_reviewer" "$p_tests")   # add "$p_docs" if spawned
+rpids=()
+for p in "${fleet[@]}"; do
+  python3 "$here/wait_for_idle.py" "$p" --ready --timeout 60 --no-print &
+  rpids+=("$!:$p")
+done
+for e in "${rpids[@]}"; do
+  jp="${e%%:*}"; pane="${e#*:}"
+  if wait "$jp"; then echo "$pane: ready"
+  else rc=$?
+    case "$rc" in 3) echo "$pane: BLOCKED — a human must answer a dialog" >&2 ;;
+                  2) echo "$pane: not ready within 60s (timeout)" >&2 ;;
+                  *) echo "$pane: readiness check failed (rc $rc)" >&2 ;; esac
+  fi
+done
 ```
 
 ### Grid heuristics
@@ -331,26 +350,43 @@ done
 panes=("${ready_panes[@]+"${ready_panes[@]}"}"); labels=("${ready_labels[@]+"${ready_labels[@]}"}")
 [ "${#panes[@]}" -gt 0 ] || { echo "Error: no targets left to send to." >&2; exit 1; }
 
-tmpdir="$(mktemp -d)"
+tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
 markers=(); tasks=()
 for i in "${!panes[@]}"; do
-  herdr pane read "${panes[$i]}" --source recent-unwrapped --lines 80 >"$tmpdir/$i.baseline"
+  herdr pane read "${panes[$i]}" --source recent-unwrapped --lines 80 >"$tmpdir/$i.baseline" \
+    || { echo "Error: baseline read failed for ${panes[$i]}" >&2; exit 1; }
   suffix="$(date +%s)_$$_${i}_$RANDOM"
   markers+=("HERDR_DONE_$suffix")
   tasks[$i]="$msg
 
 After fully finishing, concatenate and print: HERDR_DONE_ and $suffix"
 done
+send_failed=()
 for i in "${!panes[@]}"; do
-  herdr pane run "${panes[$i]}" "${tasks[$i]}"
+  herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("${panes[$i]}")
 done
 
+# Retain each waiter's exit status — a bare `wait` masks timeouts (rc 2) and
+# blocked (rc 3), so the whole broadcast would "succeed" with agents stuck.
+pids=()
 for i in "${!panes[@]}"; do
   python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
+  pids+=("$!:${panes[$i]}")
 done
-wait
-rm -rf "$tmpdir"
+overall=0
+for e in "${pids[@]}"; do
+  jp="${e%%:*}"; pane="${e#*:}"
+  if wait "$jp"; then echo "$pane: reply ready"
+  else rc=$?
+    case "$rc" in 3) echo "$pane: BLOCKED (human needed)" >&2 ;;
+                  2) echo "$pane: TIMEOUT" >&2 ;;
+                  *) echo "$pane: waiter failed (rc $rc)" >&2 ;; esac
+    overall=1
+  fi
+done
+[ "${#send_failed[@]}" -eq 0 ] || { echo "Send failed for: ${send_failed[*]}" >&2; overall=1; }
+exit "$overall"
 ```
 
 Do **not** `agent send` and then `pane run` the same message (double submit). Do **not** wait only on `done` for the full budget when the tab is focused — agents often settle as `idle` (use `wait_for_idle.py` or idle|done polling). Do **not** drop the dedupe or busy/blocked preflight from this manual path — that would reintroduce double-sends and dialog-clobbering that `scripts/broadcast.sh` exists to prevent.

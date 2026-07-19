@@ -26,20 +26,27 @@ After `pane run` / send:
 
 ```bash
 baseline="$(mktemp)"
-herdr pane read "$pane" --source recent-unwrapped --lines 80 >"$baseline"
+herdr pane read "$pane" --source recent-unwrapped --lines 80 >"$baseline" \
+  || { echo "Error: baseline read failed for $pane" >&2; exit 1; }
 suffix="$(date +%s)_$$_$RANDOM"
 completion_marker="HERDR_DONE_$suffix"
 task="do the thing
 
 After fully finishing, concatenate and print these parts without spaces: HERDR_DONE_ and $suffix"
-herdr pane run "$pane" "$task"
+herdr pane run "$pane" "$task" || { echo "Error: send failed for $pane" >&2; exit 1; }
 if herdr wait agent-status "$pane" --status working --timeout 15000; then
   echo delivered
-elif ! cmp -s "$baseline" <(herdr pane read "$pane" --source recent-unwrapped --lines 80); then
-  echo delivered-transcript-activity
 else
-  herdr pane send-keys "$pane" enter
-  herdr wait agent-status "$pane" --status working --timeout 10000 || echo NOT-DELIVERED
+  # Capture the read EXPLICITLY and check it — a failed `herdr pane read`
+  # inside `<(...)` would differ from baseline and be misread as activity.
+  after="$(herdr pane read "$pane" --source recent-unwrapped --lines 80)" \
+    || { echo "Error: post-send read failed for $pane" >&2; exit 1; }
+  if ! printf '%s' "$after" | cmp -s "$baseline" -; then
+    echo delivered-transcript-activity
+  else
+    herdr pane send-keys "$pane" enter
+    herdr wait agent-status "$pane" --status working --timeout 10000 || echo NOT-DELIVERED
+  fi
 fi
 ```
 
@@ -132,34 +139,70 @@ Capture every baseline first, then send all, then wait concurrently. This order 
 
 ```bash
 tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT   # cleanup regardless of how we exit
 markers=()
 tasks=()
 for i in "${!panes[@]}"; do
-  herdr pane read "${panes[$i]}" --source recent-unwrapped --lines 80 >"$tmpdir/$i.baseline"
+  # Guard each baseline read — a silent failure here would poison the wait.
+  herdr pane read "${panes[$i]}" --source recent-unwrapped --lines 80 >"$tmpdir/$i.baseline" \
+    || { echo "Error: baseline read failed for ${panes[$i]}" >&2; exit 1; }
   suffix="$(date +%s)_$$_${i}_$RANDOM"
   markers+=("HERDR_DONE_$suffix")
   tasks[$i]="$msg
 
 After fully finishing, concatenate and print: HERDR_DONE_ and $suffix"
 done
-for i in "${!panes[@]}"; do herdr pane run "${panes[$i]}" "${tasks[$i]}"; done
+# Send to all; a failed send must be recorded, not ignored.
+send_failed=()
+for i in "${!panes[@]}"; do
+  herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("${panes[$i]}")
+done
+# Wait concurrently, but capture EACH waiter's exit status (a bare `wait`
+# returns 0 for the shell even if a waiter timed out or hit `blocked`).
+pids=()
 for i in "${!panes[@]}"; do
   python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
+  pids+=("$!:${panes[$i]}")
 done
-wait
-rm -rf "$tmpdir"
+overall=0
+for e in "${pids[@]}"; do
+  jp="${e%%:*}"; pane="${e#*:}"
+  if wait "$jp"; then
+    echo "$pane: reply ready"
+  else
+    rc=$?
+    case "$rc" in
+      3) echo "$pane: BLOCKED — a human must answer a dialog" >&2 ;;
+      2) echo "$pane: TIMEOUT before completion" >&2 ;;
+      *) echo "$pane: waiter failed (rc $rc)" >&2 ;;
+    esac
+    overall=1
+  fi
+done
+if [ "${#send_failed[@]}" -gt 0 ]; then
+  echo "Send failed for: ${send_failed[*]}" >&2
+  overall=1
+fi
+exit "$overall"   # non-zero if any send failed or any waiter didn't complete
 ```
 
 Or with raw waits — **do not** wait only on `done` (focused fleet tabs usually finish as `idle`):
 
 ```bash
-for p in "${panes[@]}"; do herdr pane run "$p" "$msg"; done
+send_failed=()
+for p in "${panes[@]}"; do herdr pane run "$p" "$msg" || send_failed+=("$p"); done
+pids=()
 for p in "${panes[@]}"; do
   (
     deadline=$((SECONDS + 180))
     while (( SECONDS < deadline )); do
-      st=$(herdr pane get "$p" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"].get("agent_status",""))')
+      # Guard the status read — a failed `herdr pane get` must not be treated
+      # as an empty status that falls through to `sleep`; exit as an error.
+      out=$(herdr pane get "$p" 2>/dev/null) || exit 4
+      st=$(printf '%s' "$out" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin)["result"]["pane"].get("agent_status") or "unknown")
+except Exception: sys.exit(1)') || exit 4
       case "$st" in
         done|idle) exit 0 ;;
         blocked) exit 3 ;;
@@ -170,8 +213,18 @@ for p in "${panes[@]}"; do
     done
     exit 2
   ) &
+  pids+=("$!:$p")
 done
-wait
+overall=0
+for e in "${pids[@]}"; do
+  jp="${e%%:*}"; pane="${e#*:}"
+  wait "$jp" || { rc=$?; overall=1
+    case "$rc" in 3) echo "$pane: BLOCKED (human needed)" >&2 ;;
+                  4) echo "$pane: status lookup failed" >&2 ;;
+                  *) echo "$pane: not ready (rc $rc)" >&2 ;; esac; }
+done
+[ "${#send_failed[@]}" -eq 0 ] || { echo "Send failed: ${send_failed[*]}" >&2; overall=1; }
+exit "$overall"
 ```
 
 Or simply: `scripts/broadcast.sh "$msg" reviewer tests docs`.

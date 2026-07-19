@@ -271,11 +271,27 @@ def boundary_resize_op(
     return (ids[boundary + 1], "left", amount)
 
 
+def require_root_membership(ids: list[str], root_pane: str | None) -> None:
+    """Fail HARD if a requested root pane isn't part of the layout.
+
+    If the caller named a `root_pane` but it isn't among the ordered column
+    ids, the layout we're about to split/equalize is NOT the root's tab — so
+    the "rightmost column" target and the whole equal-width plan would apply
+    to the wrong tab. That must abort before any mutation, not warn and
+    proceed. `root_pane is None` means "no specific root requested" and is
+    fine (plan from whatever layout was supplied).
+    """
+    if root_pane and root_pane not in ids:
+        raise SystemExit(
+            f"requested root pane {root_pane!r} is not in this layout "
+            f"(columns: {ids}); refusing to split/equalize the wrong tab"
+        )
+
+
 def plan_next_split(panes: list[dict], root_pane: str | None) -> tuple[str, int]:
     """Return `(rightmost_pane_id, new_column_count)` for adding a column."""
     ordered = _pane_ids_left_to_right(panes)
-    if root_pane and root_pane not in ordered:
-        print(f"Warning: root pane {root_pane!r} not found in layout", file=sys.stderr)
+    require_root_membership(ordered, root_pane)
     return ordered[-1], len(ordered) + 1
 
 
@@ -314,7 +330,10 @@ def equalize_live(root_pane: str | None) -> int:
 
     # Reject 2D / stacked layouts BEFORE any resize — mutating a layout the
     # column model misreads would scramble the panes.
-    validate_single_row(load_layout(root_pane, None))
+    initial = load_layout(root_pane, None)
+    validate_single_row(initial)
+    # And refuse to equalize a tab the requested root isn't even part of.
+    require_root_membership(_ordered_columns(panes_from_layout(initial))[0], root_pane)
 
     for _ in range(MAX_EQUALIZE_PASSES):
         data = load_layout(root_pane, None)
