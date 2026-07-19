@@ -76,12 +76,12 @@ spawn_sub() {
   printf '%s\n' "$pane"
 }
 
-# Caller MUST check the status — `$(...)` hides it:
-#   p_reviewer="$(spawn_sub reviewer 'pi --thinking medium')" || { echo aborting >&2; exit 1; }
-
-p_reviewer=$(spawn_sub reviewer "pi --thinking medium")
-p_tests=$(spawn_sub tests "pi --thinking low")
-# optional third: spawn_sub docs "pi --thinking low"
+# Caller MUST check the status — `$(...)` hides spawn_sub's non-zero exit, so
+# a failed equalize would otherwise be ignored and the next spawn would build
+# on a broken layout. Abort the whole fleet spawn if any placement fails.
+p_reviewer=$(spawn_sub reviewer "pi --thinking medium") || { echo "reviewer failed to place; aborting" >&2; exit 1; }
+p_tests=$(spawn_sub tests "pi --thinking low") || { echo "tests failed to place; aborting" >&2; exit 1; }
+# optional third: p_docs=$(spawn_sub docs "pi --thinking low") || { echo "docs failed; aborting" >&2; exit 1; }
 ```
 
 ### Grid heuristics
