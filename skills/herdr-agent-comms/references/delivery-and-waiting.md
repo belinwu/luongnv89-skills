@@ -61,8 +61,12 @@ else
     # dialog, not deliver the task. Never send the Enter blind.
     python3 "$sd/preflight_send.py" "$pane" >/dev/null \
       || { echo "Error: $pane not safe for recovery Enter (blocked/working/unverifiable) — see stderr" >&2; rm -f "$after"; exit 1; }
-    herdr pane send-keys "$pane" enter
-    herdr wait agent-status "$pane" --status working --timeout 10000 || echo NOT-DELIVERED
+    # Guard the keystroke, then PROPAGATE a failed re-wait. `|| echo NOT-DELIVERED`
+    # alone exits 0 — a genuine non-delivery would be reported as success.
+    herdr pane send-keys "$pane" enter \
+      || { echo "Error: recovery Enter failed for $pane" >&2; rm -f "$after"; exit 1; }
+    herdr wait agent-status "$pane" --status working --timeout 10000 \
+      || { echo "Error: $pane NOT-DELIVERED — still idle after recovery Enter; re-send the task." >&2; rm -f "$after"; exit 1; }
   fi
   rm -f "$after"
 fi
@@ -171,7 +175,7 @@ The helper mirrors tmux-agent-comms' wait semantics (exit 0 idle / 2 timeout / 3
 
 Capture every baseline first, then send all, then wait concurrently. This order handles agents that finish before their waiter process starts.
 
-**Precondition:** `$panes` here must already be the deduped, **preflighted** target set — every entry passed the fail-closed working/blocked/unverifiable check (as `scripts/broadcast.sh` Phase 1b and the manual fleet recipe in `references/herdr-recipes.md` build it). Don't `pane run` a raw target list; a working/blocked/off-enum pane would be sent into blind. Prefer `scripts/broadcast.sh`, which does all of this.
+**Precondition:** `$panes` here must already be the deduped, **preflighted** target set — every entry passed the fail-closed working/blocked/unverifiable check (as `scripts/broadcast.sh` Phase 1b and the manual fleet recipe in `references/herdr-recipes.md` build it). Don't `pane run` a raw target list; a working/blocked/off-enum pane would be sent into blind. These illustrative loops send straight after baselining, so a target that turns working/blocked in that window is sent into anyway — prefer `scripts/broadcast.sh`, which **rechecks each target's status immediately before its dispatch** and skips any that became unsafe.
 
 ```bash
 tmpdir="$(mktemp -d)"

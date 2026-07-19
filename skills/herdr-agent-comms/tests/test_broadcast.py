@@ -48,9 +48,10 @@ class FakeHerdrHarness:
             return json.load(f)
 
     def set_pane(self, pane_id, status, text, name=None, fail_run=False,
-                 fail_get=False, malformed_get=False):
+                 fail_get=False, malformed_get=False,
+                 status_after=None, status_flip_to=None):
         state = self.read_state()
-        state["panes"][pane_id] = {
+        pane = {
             "agent_status": status,
             "text": text,
             "name": name,
@@ -58,6 +59,10 @@ class FakeHerdrHarness:
             "fail_get": fail_get,
             "malformed_get": malformed_get,
         }
+        if status_after is not None:
+            pane["status_after"] = status_after
+            pane["status_flip_to"] = status_flip_to
+        state["panes"][pane_id] = pane
         self.write_state(state)
 
     def set_status(self, pane_id, status):
@@ -222,6 +227,52 @@ class BroadcastDedupeTests(unittest.TestCase):
                          msg=f"off-enum-status pane must not be sent to. stdout={cp.stdout!r}")
         self.assertNotEqual(cp.returncode, 0)
         self.assertIn("verify", cp.stderr.lower())
+
+    def test_target_that_turns_working_before_dispatch_is_skipped(self):
+        """Regression (round 11, finding #3): a target that passes the Phase 1b
+        preflight (idle) but turns `working` in the window before its Phase 3
+        dispatch must be re-checked and SKIPPED, not sent to. `status_after=1`
+        flips the pane get result idle->working: get #1 (Phase 1b) sees idle,
+        get #2 (the new pre-dispatch recheck) sees working. Targeting by NAME
+        keeps the get count deterministic — resolve_pane's name lookup doesn't
+        consume a `pane get` on the pane id."""
+        self.h.set_pane("racy1", "idle", "was idle at preflight\n", name="racy",
+                        status_after=1, status_flip_to="working")
+        cp = self.h.run_broadcast("do the thing", ["racy"], timeout=5)
+        # never sent (turned working before dispatch), error exit, reason surfaced.
+        self.assertEqual(self.h.count_pane_run_invocations("racy1"), 0,
+                         msg=f"target that turned working must not be sent to. stdout={cp.stdout!r} stderr={cp.stderr!r}")
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("before dispatch", cp.stderr.lower())
+
+    def test_target_that_turns_working_before_dispatch_still_sends_good_one(self):
+        """Mixed: one target stays idle (gets the message), another turns
+        working before dispatch (skipped). Good pane settles; overall exit is
+        still non-zero because the racy target was dropped."""
+        self.h.set_pane("racy1", "idle", "flips\n", name="racy",
+                        status_after=1, status_flip_to="working")
+        self.h.set_pane("ok1", "idle", "stays ready\n", name="ready")
+
+        def finish_ready():
+            deadline = time.time() + 5
+            m = None
+            while time.time() < deadline and m is None:
+                m = re.search(r"HERDR_DONE_ and (\S+)", self.h.read_state()["panes"]["ok1"]["text"])
+                if m is None:
+                    time.sleep(0.02)
+            if m:
+                self.h.append_text("ok1", f"HERDR_DONE_{m.group(1)}\n")
+            self.h.set_status("ok1", "idle")
+
+        t = threading.Thread(target=finish_ready)
+        t.start()
+        cp = self.h.run_broadcast("do the thing", ["racy", "ready"], timeout=7)
+        t.join()
+        self.assertEqual(self.h.count_pane_run_invocations("racy1"), 0,
+                         msg=f"racy target must not be sent. stdout={cp.stdout!r}")
+        self.assertGreaterEqual(self.h.count_pane_run_invocations("ok1"), 1)
+        self.assertIn("ready", cp.stdout)
+        self.assertNotEqual(cp.returncode, 0)
 
     def test_failed_status_lookup_skips_only_bad_target(self):
         """A verifiable idle pane alongside an unverifiable one: the good pane

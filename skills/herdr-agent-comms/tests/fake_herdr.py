@@ -11,6 +11,10 @@ State lives in a JSON file at $FAKE_HERDR_STATE, shaped:
       "fail_run": true  # optional: "pane run" on this pane returns exit 1
                         # without mutating state, to simulate a dispatch
                         # failure partway through a broadcast fan-out.
+      "status_after": 1,        # optional: report agent_status for the first
+      "status_flip_to": "working"  # N gets, then flip to status_flip_to. Models
+                        # a target that was safe at preflight but turned
+                        # working/blocked before its pre-dispatch recheck.
     }
   }
 }
@@ -104,7 +108,19 @@ def cmd_pane_get(args):
         # Simulate a 0-exit but unparseable/unexpected-shape response.
         print("not json at all {[")
         return 0
-    print(json.dumps({"result": {"pane": {"pane_id": pid, "agent_status": p["agent_status"]}}}))
+    # Counter-based status FLIP: report agent_status for the first
+    # `status_after` gets, then switch to `status_flip_to` on every get after.
+    # Deterministic "was idle at preflight, turned working/blocked before
+    # dispatch" with no timing race — mirrors the fail_get_after pattern.
+    status = p["agent_status"]
+    n = p.get("status_after")
+    if n is not None:
+        if n <= 0:
+            status = p.get("status_flip_to", status)
+        else:
+            p["status_after"] = n - 1
+            save_state(state)
+    print(json.dumps({"result": {"pane": {"pane_id": pid, "agent_status": status}}}))
     return 0
 
 

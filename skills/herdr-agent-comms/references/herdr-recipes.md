@@ -428,7 +428,7 @@ Do **not** `agent send` and then `pane run` the same message (double submit). Do
 | Unequal-width columns | Always split the current rightmost column and apply the full resize plan from `next_grid_split.py` |
 | Agent always `unknown` | `herdr integration install <agent>`; `herdr agent explain <target>` |
 | Nested tmux breaks detection | Don't run tmux inside Herdr panes |
-| `pane run` typed but agent idle | `herdr pane send-keys $pane enter`; re-wait `working` |
+| `pane run` typed but agent idle | Preflight (`preflight_send.py`), then guarded `send-keys $pane enter`; re-wait `working` and **propagate** its failure (a swallowed re-wait reports non-delivery as success) |
 | Status stuck `working` | `pane read`; overall wait budget; escalate stall |
 | `blocked` | Human must answer dialog; `agent focus` to show it |
 | Panes too narrow | Fewer agents (equal-width columns shrink every time); tab-per-agent only if user asks |

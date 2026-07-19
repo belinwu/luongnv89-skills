@@ -189,8 +189,25 @@ done
 # panes proceed to Phase 4.
 markers=()
 send_failed=()
+became_unsafe=()
 for i in "${!panes[@]}"; do
   p="${panes[$i]}"
+  # Re-check status immediately before dispatch. The Phase 1b preflight and the
+  # Phase 2 baseline loop both run BEFORE this send, so a target that was idle
+  # then could have gone `working`/`blocked` (or become unverifiable) in the
+  # interval. Sending now would type into a dialog or race a prior task's
+  # completion. Skip it and fold it into the failure aggregation — same
+  # fail-closed, enum-validated check as Phase 1b.
+  if ! st="$(pane_status "$p")"; then
+    echo "Error: ${labels[$i]} ($p) status became unverifiable before dispatch — skipped (not sent)." >&2
+    became_unsafe+=("$i")
+    continue
+  fi
+  if [ "$st" = "working" ] || [ "$st" = "blocked" ]; then
+    echo "Error: ${labels[$i]} ($p) turned $st before dispatch — skipped (not sent)." >&2
+    became_unsafe+=("$i")
+    continue
+  fi
   suffix="$(date +%s)_$$_${i}_${RANDOM}"
   markers[$i]="HERDR_DONE_$suffix"
   task="$msg
@@ -203,11 +220,13 @@ After fully finishing the task, concatenate and print these two parts without sp
 done
 
 # Phase 4: wait concurrently, but only on panes the send actually reached.
+# Exclude both `send_failed` (pane run errored) and `became_unsafe` (skipped at
+# the pre-dispatch recheck) — neither was sent, so neither has a task to await.
 pids=()
 wait_indices=()
 for i in "${!panes[@]}"; do
   skip=""
-  for f in "${send_failed[@]+"${send_failed[@]}"}"; do
+  for f in "${send_failed[@]+"${send_failed[@]}"}" ${became_unsafe[@]+"${became_unsafe[@]}"}; do
     [ "$f" = "$i" ] && { skip=1; break; }
   done
   [ -n "$skip" ] && continue
@@ -232,7 +251,8 @@ overall=0
 # `unverifiable` targets (status lookup/parse failed). Omitting them here made
 # a mixed bad+good broadcast exit 0 even though some targets were skipped.
 if [ "${#busy[@]}" -gt 0 ] || [ "${#blocked[@]}" -gt 0 ] \
-   || [ "${#unverifiable[@]}" -gt 0 ] || [ "${#send_failed[@]}" -gt 0 ]; then
+   || [ "${#unverifiable[@]}" -gt 0 ] || [ "${#send_failed[@]}" -gt 0 ] \
+   || [ "${#became_unsafe[@]}" -gt 0 ]; then
   overall=1
 fi
 for i in "${wait_indices[@]+"${wait_indices[@]}"}"; do
@@ -255,9 +275,13 @@ done
 for i in "${send_failed[@]+"${send_failed[@]}"}"; do
   echo "===== ${labels[$i]} (${panes[$i]}) [SEND-FAILED, not waited] =====" >&2
 done
+for i in "${became_unsafe[@]+"${became_unsafe[@]}"}"; do
+  echo "===== ${labels[$i]} (${panes[$i]}) [BECAME-UNSAFE before dispatch, not sent] =====" >&2
+done
 
-if [ "${#send_failed[@]}" -gt 0 ]; then
-  echo "Partial results: ${#send_failed[@]} of ${#panes[@]} target(s) never received the message (see SEND-FAILED above). Results above are only for targets successfully dispatched." >&2
+if [ "${#send_failed[@]}" -gt 0 ] || [ "${#became_unsafe[@]}" -gt 0 ]; then
+  ndrop=$(( ${#send_failed[@]} + ${#became_unsafe[@]} ))
+  echo "Partial results: $ndrop of ${#panes[@]} target(s) never received the message (see SEND-FAILED / BECAME-UNSAFE above). Results above are only for targets successfully dispatched." >&2
 fi
 
 exit "$overall"

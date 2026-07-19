@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.14.0
+  version: 1.15.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -265,7 +265,6 @@ herdr pane read "$pane_id" --source recent-unwrapped --lines 80 >"$baseline_file
   || { echo "Error: could not capture baseline for $pane_id" >&2; exit 1; }
 marker_suffix="$(date +%s)_$$_$RANDOM"
 completion_marker="HERDR_DONE_$marker_suffix"
-
 # Keep the full marker out of the prompt so prompt echo cannot satisfy the wait.
 task="summarize the changes in src/
 
@@ -304,7 +303,12 @@ fi
 ```bash
 python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
   || { echo "Error: $pane_id not safe for recovery Enter (blocked/working/unverifiable) — see stderr" >&2; exit 1; }
-herdr pane send-keys "$pane_id" enter
+# Guard the keystroke itself, then re-wait for `working` and PROPAGATE failure:
+# a swallowed re-wait (bare `|| echo NOT-DELIVERED`) reports a non-delivery as
+# success. Still idle after the Enter → the send never landed; exit non-zero.
+herdr pane send-keys "$pane_id" enter || { echo "Error: recovery Enter failed for $pane_id" >&2; exit 1; }
+herdr wait agent-status "$pane_id" --status working --timeout 10000 \
+  || { echo "Error: $pane_id NOT-DELIVERED — still idle after recovery Enter; re-send the task." >&2; exit 1; }
 ```
 
 A transcript change proves delivery activity, but may be only the echoed prompt; do **not** submit an extra Enter. The split completion marker lets Phase 5 distinguish echo from a finished reply.
@@ -357,6 +361,10 @@ Optional helper when status stays `unknown` (no integration / undetected CLI): `
 
 ```bash
 herdr agent focus reviewer          # jump UI to that agent
+# Preflight EVERY follow-up too: the pane may have gone working/blocked/
+# unverifiable since the last reply (Phase 4 resolved $here).
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe for follow-up (preflight failed) — see stderr" >&2; exit 1; }
 herdr pane run "$pane_id" "Also check the failing test." || { echo "send failed for $pane_id" >&2; exit 1; }
 # then Phase 5 again
 ```
