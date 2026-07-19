@@ -152,10 +152,13 @@ split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" 
 sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r.get("root_pane") or r)["pane_id"])')"
 
 # Resize every pre-existing column (from the plan's remaining lines) to the
-# same share so the new pane doesn't leave the others too wide.
-tail -n +2 <<<"$plan" | while read -r _ pane_id share; do
-  [ "$pane_id" = "$sub_pane" ] && continue   # the new pane is already at `share` from --ratio
-  herdr pane resize --pane "$pane_id" --direction right --amount "$share" >/dev/null || true
+# same share, AND the new pane too — don't rely on --ratio alone to have put
+# the new pane at the right width; a plain resize --amount pass on every
+# column (this one included) converges regardless of what --ratio meant.
+share="$(tail -n +2 <<<"$plan" | head -1 | awk '{print $3}')"
+herdr pane resize --pane "$sub_pane" --direction right --amount "$share" >/dev/null || true
+tail -n +2 <<<"$plan" | while read -r _ pane_id pshare; do
+  herdr pane resize --pane "$pane_id" --direction right --amount "$pshare" >/dev/null || true
 done
 
 herdr pane rename "$sub_pane" "$name" >/dev/null
@@ -172,9 +175,9 @@ plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
 read -r _ split_from _dir _ratio_flag ratio < <(head -1 <<<"$plan")
 split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
 sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
-tail -n +2 <<<"$plan" | while read -r _ pane_id share; do
-  [ "$pane_id" = "$sub_pane" ] && continue
-  herdr pane resize --pane "$pane_id" --direction right --amount "$share" >/dev/null || true
+herdr pane resize --pane "$sub_pane" --direction right --amount "$ratio" >/dev/null || true
+tail -n +2 <<<"$plan" | while read -r _ pane_id pshare; do
+  herdr pane resize --pane "$pane_id" --direction right --amount "$pshare" >/dev/null || true
 done
 herdr pane rename "$sub_pane" "$name" >/dev/null
 herdr agent rename "$sub_pane" "$name" >/dev/null
@@ -427,9 +430,11 @@ spawn_sub() {
   read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
   split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
   pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
-  tail -n +2 <<<"$plan" | while read -r _ pid share; do
-    [ "$pid" = "$pane" ] && continue
-    herdr pane resize --pane "$pid" --direction right --amount "$share" >/dev/null || true
+  # Resize every column, including the new one — don't rely on --ratio alone
+  # to have sized the new pane correctly.
+  herdr pane resize --pane "$pane" --direction right --amount "$ratio" >/dev/null || true
+  tail -n +2 <<<"$plan" | while read -r _ pid pshare; do
+    herdr pane resize --pane "$pid" --direction right --amount "$pshare" >/dev/null || true
   done
   herdr pane rename "$pane" "$name" >/dev/null
   herdr agent rename "$pane" "$name" >/dev/null

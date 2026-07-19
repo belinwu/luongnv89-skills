@@ -61,9 +61,11 @@ spawn_sub() {
   read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
   j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)
   pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')
-  tail -n +2 <<<"$plan" | while read -r _ pid share; do
-    [ "$pid" = "$pane" ] && continue
-    herdr pane resize --pane "$pid" --direction right --amount "$share" >/dev/null || true
+  # Resize every column, including the new one — don't rely on --ratio alone
+  # to have sized the new pane correctly.
+  herdr pane resize --pane "$pane" --direction right --amount "$ratio" >/dev/null || true
+  tail -n +2 <<<"$plan" | while read -r _ pid pshare; do
+    herdr pane resize --pane "$pid" --direction right --amount "$pshare" >/dev/null || true
   done
   herdr pane rename "$pane" "$name" >/dev/null
   herdr agent rename "$pane" "$name" >/dev/null
@@ -127,9 +129,11 @@ plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
 read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
 j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)
 pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')
-tail -n +2 <<<"$plan" | while read -r _ pid share; do
-  [ "$pid" = "$pane" ] && continue
-  herdr pane resize --pane "$pid" --direction right --amount "$share" >/dev/null || true
+# Resize every column, including the new one — don't rely on --ratio alone
+# to have sized the new pane correctly.
+herdr pane resize --pane "$pane" --direction right --amount "$ratio" >/dev/null || true
+tail -n +2 <<<"$plan" | while read -r _ pid pshare; do
+  herdr pane resize --pane "$pid" --direction right --amount "$pshare" >/dev/null || true
 done
 herdr pane rename "$pane" logs
 herdr pane run "$pane" "bash -lc 'tail -f /tmp/app.log'"
