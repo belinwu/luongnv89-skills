@@ -139,6 +139,59 @@ class WaitForIdleMarkerSemanticsTests(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
         self.assertIn(marker, cp.stdout)
 
+    def test_working_to_done_transition_is_success_not_timeout(self):
+        """Regression (P2 round 4): a pane that goes working -> DONE and stays
+        `done` (never `idle`) must be reported as finished (rc 0), not time out
+        (rc 2). The old working-branch waited for `done` in only HALF the slice
+        then spent the WHOLE remaining deadline waiting only for `idle`, so a
+        pane settling on `done` AFTER that half-window blocked until timeout.
+        The fix bounds the idle-wait too and loops back to re-check either
+        terminal state.
+
+        Timing matters: the pane must stay `working` past the first half-window
+        (~half the deadline) and only then flip to `done`, otherwise the old
+        code's initial `wait done` succeeds and the bug never triggers. With a
+        2s deadline the half-window is ~1s, so flip at 1.2s.
+        """
+        baseline_text = "before send\n"
+        self.h.set_pane("p1", "working", baseline_text)
+        baseline = self.h.baseline_file(baseline_text)
+
+        def do_work():
+            time.sleep(1.2)  # past the first half-window; misses the buggy `wait done`
+            self.h.append_text("p1", "reply text, task complete\n")
+            self.h.set_status("p1", "done")  # terminal DONE, never idle
+
+        t = threading.Thread(target=do_work)
+        t.start()
+        cp = self.h.run_waiter("p1", "--baseline-file", baseline, "--timeout", "2")
+        t.join()
+        self.assertEqual(cp.returncode, 0, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_working_to_done_with_marker_is_success(self):
+        """Same working->done transition (flipping past the half-window), but
+        with a completion marker: the fresh marker appearing at the `done`
+        transition must be accepted, not lost because the branch only watched
+        for `idle`."""
+        baseline_text = "before send\n"
+        self.h.set_pane("p1", "working", baseline_text)
+        baseline = self.h.baseline_file(baseline_text)
+        marker = "HERDR_DONE_done_only_42"
+
+        def do_work():
+            time.sleep(1.2)
+            self.h.append_text("p1", f"reply {marker}\n")
+            self.h.set_status("p1", "done")  # terminal DONE, never idle
+
+        t = threading.Thread(target=do_work)
+        t.start()
+        cp = self.h.run_waiter(
+            "p1", "--baseline-file", baseline, "--completion-marker", marker, "--timeout", "2"
+        )
+        t.join()
+        self.assertEqual(cp.returncode, 0, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+        self.assertIn(marker, cp.stdout)
+
     def test_blocked_status_returns_3(self):
         self.h.set_pane("p1", "blocked", "trust dialog\n")
         baseline = self.h.baseline_file("trust dialog\n")

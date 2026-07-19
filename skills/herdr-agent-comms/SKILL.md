@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.7.0
+  version: 1.8.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -32,9 +32,10 @@ Tab (root's tab)
 ```
 (All columns — root and every sub-agent — end up the same width, ±1 terminal
 cell. Adding a column means splitting the current rightmost pane `right`
-(`--ratio (N-1)/N`), then running an iterative equalizer that re-converges
-every column to `1/N`. `next_grid_split.py` does both (`--equalize`); see
-Phase 2a and "Equal-width columns" below for the verified `herdr` semantics.)
+(`--ratio 1/N`, so the new right pane lands on the `1/N` equal target), then
+running an iterative equalizer that re-converges every column to `1/N`.
+`next_grid_split.py` does both (`--equalize`); see Phase 2a and "Equal-width
+columns" below for the verified `herdr` semantics.)
 
 You orchestrate with the `herdr` CLI. Prefer agent-status waits over scrollback polling. Relay each agent's answer, not its whole screen.
 
@@ -140,18 +141,21 @@ agent_cmd='pi --thinking medium'
 # free name if taken
 herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
 
-# Plan line: "split <rightmost_pane> right --ratio <existing_child_ratio>".
-# The ratio = (N-1)/N so the NEW pane is born at the 1/N target share.
+# Plan line: "split <rightmost> right --ratio <1/N>". ratio=1/N so the new
+# right pane lands on the 1/N equal target (see "Equal-width columns" below).
 plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
 read -r _ split_from _dir _ratio_flag ratio < <(head -1 <<<"$plan")
 split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
 sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r.get("root_pane") or r)["pane_id"])')"
 
-# Equalize every column (root + all sub-agents) to the same width. This runs
-# an iterative boundary sweep against the live layout — a split alone leaves
-# the pre-existing columns wider than the new 1/N share.
-python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" || \
-  echo "Warning: columns are best-effort (see herdr pane layout)." >&2
+# Equalize every column to the same width (a split alone leaves pre-existing
+# columns wider than 1/N). HARD GATE: on failure (resize error or
+# non-convergence) do NOT launch into a broken layout — abort and name the
+# orphan split pane. Never swallow this with `|| true`.
+if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane"; then
+  echo "Error: column equalization failed; NOT launching '$name'. Orphan split pane: $sub_pane. Inspect with 'herdr pane layout --pane $root_pane', then 'herdr pane close $sub_pane' to undo, or retry." >&2
+  exit 1
+fi
 
 herdr pane rename "$sub_pane" "$name" >/dev/null
 herdr agent rename "$sub_pane" "$name" >/dev/null
@@ -167,7 +171,9 @@ herdr pane run "$sub_pane" "$agent_cmd" >/dev/null
 ```bash
 herdr agent start "$name" --cwd "$project_dir" --workspace "$ws" --tab "$root_tab" \
   --split right --no-focus -- pi --thinking medium
-python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" || true
+# Same hard gate: abort if the grid can't be equalized rather than leaving it uneven.
+python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" || {
+  echo "Error: equalization failed after agent start; inspect 'herdr pane layout --pane $root_pane'." >&2; exit 1; }
 ```
 
 Prefer **`next_grid_split.py` split + `--equalize`** so the grid includes root and stays equal-width. This alternative skips the equalize step unless you add it.
@@ -180,7 +186,7 @@ Prefer **`next_grid_split.py` split + `--equalize`** so the grid includes root a
 5. Always `--no-focus` so the root keeps the keyboard.
 6. Optional check: `herdr pane layout --pane "$root_pane"` should show N rects of near-equal `rect.width` (equal within ~1 cell), not one wide pane and thin strips.
 
-**Equal-width columns — behavior:** herdr `pane split --ratio` sizes only the split pane, and `pane resize --amount` is a *delta* (cells as a fraction of tab width) whose freed space redistributes proportionally across neighbors — so a single split or a single resize pass cannot equalize 3+ columns. The equalizer sweeps internal boundaries left to right, growing the neighbor-bearing pane toward each target, and iterates until the spread is ≤1 cell. This was verified live against herdr 0.7.4 (2→105/105, 3→70/70/70, 4→53/53/52/52, 5→42×5). Because widths are whole terminal cells, exact equality only holds when the tab width divides evenly; otherwise columns differ by ≤1 cell. Full semantics and the derivation are in `references/herdr-recipes.md`.
+**Equal-width columns — behavior:** herdr `pane split --ratio R` sizes only the split pane (`R` = the existing/left child's fraction; the new right pane gets `1-R`). Splitting the rightmost column with `--ratio 1/N` makes the new pane `(N-1)/N` of that column = `1/N` of the whole tab (the equal target). `pane resize --amount` is a *delta* (cells as a fraction of tab width) whose freed space redistributes proportionally across neighbors — so a single split or a single resize pass cannot equalize 3+ columns. The equalizer sweeps internal boundaries left to right, growing the neighbor-bearing pane toward each target, and iterates until the spread is ≤1 cell. This was verified live against herdr 0.7.4 (2→105/105, 3→70/70/70, 4→53/53/52/52, 5→42×5). Because widths are whole terminal cells, exact equality only holds when the tab width divides evenly; otherwise columns differ by ≤1 cell. A resize failure or non-convergence is a **hard error** — `--equalize` exits non-zero and the spawn recipes abort (they do **not** launch a worker into an uneven layout). Full semantics and the derivation are in `references/herdr-recipes.md`.
 
 **Forbidden by default:** `herdr tab create` per sub-agent; hijacking the root pane with the first worker's CLI; `herdr workspace create` just to host workers when a root pane already exists; splitting a column other than the current rightmost one.
 
@@ -402,19 +408,30 @@ spawn_sub() {
   local name="$1" cmd="$2"
   local plan split_from ratio split_json pane
   herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-  # Plan line: "split <rightmost> right --ratio <(N-1)/N>" (new pane born at 1/N).
+  # Plan line: "split <rightmost> right --ratio <1/N>" (new right pane lands on the 1/N target).
   plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
   read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
   split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
   pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
   # Equalize all columns — a split alone leaves the pre-existing columns wide.
-  python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >/dev/null 2>&1 || true
+  # HARD GATE: on failure, return non-zero WITHOUT launching or printing a
+  # pane id, so the caller aborts instead of spawning into a broken layout.
+  # (No `|| true` — that silently swallowed the failure.)
+  if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >&2; then
+    echo "Error: equalize failed for '$name'; orphan split pane $pane not launched. Inspect 'herdr pane layout --pane $root_pane' or 'herdr pane close $pane'." >&2
+    return 1
+  fi
   herdr pane rename "$pane" "$name" >/dev/null
   herdr agent rename "$pane" "$name" >/dev/null
   herdr pane run "$pane" "$cmd" >/dev/null
   herdr wait agent-status "$pane" --status idle --timeout 60000 >/dev/null
   printf '%s\n' "$pane"
 }
+
+# Caller MUST check the exit status — `$(...)` swallows it otherwise:
+#   if ! p_reviewer="$(spawn_sub reviewer 'pi --thinking medium')"; then
+#     echo "aborting fleet spawn: reviewer failed to place" >&2; exit 1
+#   fi
 
 p1="$(spawn_sub reviewer 'pi --thinking medium')"
 p2="$(spawn_sub tests 'pi --thinking low')"
@@ -453,7 +470,7 @@ rm -f "$b1" "$b2"
 ## Reference
 
 - `references/herdr-recipes.md` — grid layouts, multi-line sends, focus/steer, scrollback, troubleshooting.
-- `scripts/next_grid_split.py` — plan the next split (`--ratio (N-1)/N`) and run the live iterative equalizer (`--equalize`) for an equal-width grid.
+- `scripts/next_grid_split.py` — plan the next split (`--ratio 1/N`) and run the live iterative equalizer (`--equalize`) for an equal-width grid.
 - `references/delivery-and-waiting.md` — delivery checks, idle/done/blocked, budgets.
 - Official concepts: https://herdr.dev/docs/concepts/ · CLI: https://herdr.dev/docs/cli-reference/ · cheatsheet: https://luongnv.com/awesome-cheatsheets/cheatsheets/herdr/
 

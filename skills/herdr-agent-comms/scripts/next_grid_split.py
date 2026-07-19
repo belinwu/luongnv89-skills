@@ -27,15 +27,17 @@ herdr server (see SKILL.md "Equal-width columns — verified semantics"):
 So the reliable strategy this script encodes is:
 
   1. Add column N by splitting the current rightmost column `right` with
-     `--ratio (N-1)/N` so the new pane is born at the 1/N target share.
+     `--ratio 1/N`. `--ratio R` is the fraction the EXISTING (left) child of
+     the split column keeps, so the NEW (right) pane gets `1 - R = (N-1)/N`
+     of that column — which, since the rightmost column is `1/(N-1)` of the
+     tab when the N-1 existing columns are equal, equals `1/N` of the whole
+     tab (the equal target). See `split_ratio()` for the derivation.
   2. Run an iterative boundary equalizer: sweep internal boundaries left
      to right, moving each toward its target cumulative position by GROWING
      the neighbor-bearing pane; repeat until the width spread is <= 1 cell
-     (or a small iteration cap). Each pass re-reads the live layout.
-
-`--emit-plan` prints the split line only (for a shell caller that runs the
-equalizer via `equalize_columns.py`). `--equalize` runs the full live
-equalizer itself against `herdr` and exits.
+     (or a small iteration cap). Each pass re-reads the live layout. A resize
+     command failure or non-convergence is a HARD error (exit 1), never
+     suppressed — the caller must not launch workers into an unequal layout.
 
 Usage:
     # plan the split for the next column (default)
@@ -46,10 +48,10 @@ Usage:
 
 Default output (one split line a caller feeds to `herdr pane split`):
 
-    split <rightmost_pane_id> right --ratio <existing_child_ratio>
+    split <rightmost_pane_id> right --ratio <1/N>
 
-where <existing_child_ratio> = (N-1)/N and N is the column count AFTER the
-split. Follow it with the equalizer (see SKILL.md Phase 2a).
+where N is the column count AFTER the split. Follow it with `--equalize`
+(see SKILL.md Phase 2a).
 
 Exit codes:
     0 success
@@ -209,6 +211,25 @@ def plan_next_split(panes: list[dict], root_pane: str | None) -> tuple[str, int]
     return ordered[-1], len(ordered) + 1
 
 
+def split_ratio(new_count: int) -> float:
+    """`--ratio` for `herdr pane split` when adding column `new_count` (= N).
+
+    In herdr 0.7.4 `--ratio R` is the fraction the EXISTING (left) child of
+    the split pane keeps; the NEW (right) pane gets `1 - R` of that pane. We
+    split the current rightmost column, which — when the N-1 existing columns
+    are already equal — is `1/(N-1)` of the whole tab. To make the new pane
+    the equal target `1/N` of the tab, it must take `((1/N)/(1/(N-1))) =
+    (N-1)/N` of the split column, so the existing child keeps `R = 1/N`.
+
+    Verified live against herdr 0.7.4: from two equal 105/105 columns,
+    splitting the rightmost with `--ratio 0.333` (=1/3) yields a new pane of
+    width 70 (= 210/3, the equal target). See SKILL.md / herdr-recipes.md.
+    """
+    if new_count < 2:
+        raise SystemExit("new column count must be >= 2 to split")
+    return 1.0 / new_count
+
+
 def _run_herdr(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["herdr", *args], text=True, capture_output=True, check=False)
 
@@ -248,23 +269,38 @@ def equalize_live(root_pane: str | None) -> int:
             if op is None:
                 continue
             pane_id, direction, amount = op
-            _run_herdr(
+            cp = _run_herdr(
                 "pane", "resize", "--pane", pane_id,
                 "--direction", direction, "--amount", f"{amount:.6f}",
             )
+            # A failed resize is a HARD error — silently swallowing it (the
+            # old `|| true` behaviour) leaves an unequal layout that the
+            # caller then launches workers into. Surface the exact command
+            # and herdr's message so the caller can act.
+            if cp.returncode != 0:
+                detail = (cp.stderr.strip() or cp.stdout.strip()
+                          or f"exit {cp.returncode}")
+                raise SystemExit(
+                    f"herdr pane resize failed for {pane_id} "
+                    f"(--direction {direction} --amount {amount:.6f}): {detail}. "
+                    f"Layout left unequal; inspect with "
+                    f"`herdr pane layout --pane {root_pane or '--current'}`."
+                )
 
-    # Final check after the cap.
+    # Final check after the cap. Non-convergence is also a hard error — do
+    # not report "best-effort" and let the caller proceed onto an unequal grid.
     data = load_layout(root_pane, None)
     _, widths = _ordered_columns(panes_from_layout(data))
     spread = max(widths) - min(widths)
     if spread <= EQUAL_TOLERANCE_CELLS:
         return 0
-    print(
-        f"Warning: columns not fully equal after {MAX_EQUALIZE_PASSES} passes "
-        f"(spread {spread:.0f} cells); layout is best-effort.",
-        file=sys.stderr,
+    raise SystemExit(
+        f"columns did not converge to equal width after {MAX_EQUALIZE_PASSES} "
+        f"passes (widths {[int(w) for w in widths]}, spread {spread:.0f} cells). "
+        f"Do NOT launch workers into this layout; inspect with "
+        f"`herdr pane layout --pane {root_pane or '--current'}` and retry, or "
+        f"reduce the column count."
     )
-    return 1
 
 
 def main() -> int:
@@ -300,9 +336,10 @@ def main() -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    # existing (left) child keeps (N-1)/N so the NEW pane is born at 1/N.
-    existing_child_ratio = (new_count - 1) / new_count
-    print(f"split {rightmost} right --ratio {existing_child_ratio:.6f}")
+    # `--ratio R` = the existing/left child's fraction of the split column.
+    # R = 1/N makes the NEW (right) pane the equal 1/N target (see split_ratio).
+    ratio = split_ratio(new_count)
+    print(f"split {rightmost} right --ratio {ratio:.6f}")
     return 0
 
 

@@ -28,6 +28,7 @@ from next_grid_split import (  # noqa: E402
     boundary_resize_op,
     equal_targets,
     plan_next_split,
+    split_ratio,
 )
 
 
@@ -82,6 +83,43 @@ class PlanNextSplitTests(unittest.TestCase):
         rightmost, new_count = plan_next_split(layout, "root")
         self.assertEqual(rightmost, "root")
         self.assertEqual(new_count, 2)
+
+
+class SplitRatioTests(unittest.TestCase):
+    """`--ratio` = 1/N (the existing/left child's fraction). Verified live
+    against herdr 0.7.4: from two equal 105/105 columns, splitting the
+    rightmost with ratio 1/3 gives a new pane of 70 (= 210/3, the equal
+    target). The earlier (N-1)/N value was BACKWARDS — it made the new pane
+    the *small* child (35, not 70)."""
+
+    def test_second_column_is_half(self):
+        self.assertEqual(split_ratio(2), 0.5)
+
+    def test_third_column_is_one_third(self):
+        self.assertAlmostEqual(split_ratio(3), 1.0 / 3.0, places=9)
+
+    def test_fourth_column_is_one_quarter(self):
+        self.assertEqual(split_ratio(4), 0.25)
+
+    def test_ratio_is_reciprocal_of_new_count(self):
+        for n in range(2, 12):
+            self.assertAlmostEqual(split_ratio(n), 1.0 / n, places=9)
+
+    def test_new_pane_lands_on_equal_target(self):
+        """The point of the ratio: splitting the rightmost of N-1 equal
+        columns (each 1/(N-1) of the tab) at ratio 1/N makes the new pane
+        exactly 1/N of the tab."""
+        area = 210.0
+        for n in range(2, 8):
+            existing = n - 1
+            rightmost_col_width = area / existing  # existing columns are equal
+            r = split_ratio(n)
+            new_pane_width = (1.0 - r) * rightmost_col_width
+            self.assertAlmostEqual(new_pane_width, area / n, places=6)
+
+    def test_below_two_raises(self):
+        with self.assertRaises(SystemExit):
+            split_ratio(1)
 
 
 class EqualTargetsTests(unittest.TestCase):

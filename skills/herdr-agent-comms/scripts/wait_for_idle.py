@@ -252,11 +252,19 @@ def main() -> int:
             if st == "working":
                 saw_work = True
                 saw_working = True
-                slice_ms = min(30_000, max(1, int((deadline - time.time()) * 1000)))
-                # Prefer short waits so we can notice idle or done either way
-                half = max(1, slice_ms // 2)
-                if not wait_status(pane_id, "done", half):
-                    wait_status(pane_id, "idle", max(1, int((deadline - time.time()) * 1000)))
+                # Single bounded wait, then loop back so the top-of-loop
+                # re-read + the `st in ("idle", "done")` branch handle whichever
+                # terminal state we reach. `wait done` returns the instant the
+                # pane goes `done`, so a working -> done settle is caught fast;
+                # a working -> idle settle is caught by the re-read after the
+                # slice expires (idle hits the same terminal branch). The cap
+                # (min 1s) is load-bearing: control MUST return to the re-read
+                # before the deadline. The old code did a SECOND wait — for
+                # `idle`, over the whole remaining deadline — so a pane that
+                # settled on `done` (never `idle`) blocked there until timeout
+                # and returned code 2 even though it had finished.
+                slice_ms = max(1, min(1_000, int((deadline - time.time()) * 1000)))
+                wait_status(pane_id, "done", slice_ms)
                 continue
 
             if st in ("idle", "done"):

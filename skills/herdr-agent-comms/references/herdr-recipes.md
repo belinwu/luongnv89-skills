@@ -27,10 +27,12 @@ oddly wide/narrow; sidebar still rolls status per workspace.
 ### Spawn N sub-agents into an equal-width grid
 
 Use `scripts/next_grid_split.py` for every spawn: the default run emits the
-split line targeting the **current rightmost column** (`--ratio (N-1)/N`, so
-the new pane is born at the `1/N` target share), and `--equalize` runs the
-live iterative equalizer that re-converges every column (including root) to
-the same width.
+split line targeting the **current rightmost column** (`--ratio 1/N`, so the
+new right pane lands on the `1/N` equal target — see "Split ratio" below),
+and `--equalize` runs the live iterative equalizer that re-converges every
+column (including root) to the same width. `--equalize` is a **hard gate**:
+it exits non-zero on a resize failure or non-convergence, and the spawn
+helper below aborts rather than launch a worker into an uneven layout.
 
 ```bash
 root_pane="${HERDR_PANE_ID:?}"
@@ -57,18 +59,25 @@ spawn_sub() {
   local name=$1 cmd=$2
   local plan split_from ratio j pane
   herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-  # plan line: "split <rightmost> right --ratio <(N-1)/N>" (new pane born at 1/N)
+  # plan line: "split <rightmost> right --ratio <1/N>" (new right pane -> 1/N target)
   plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
   read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
   j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)
   pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')
-  # Equalize all columns — a split alone leaves the pre-existing columns wide.
-  python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >/dev/null 2>&1 || true
+  # Equalize all columns — HARD GATE: on failure return non-zero WITHOUT
+  # launching or printing a pane id, so the caller aborts (no `|| true`).
+  if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >&2; then
+    echo "Error: equalize failed for '$name'; orphan split pane $pane not launched. Inspect 'herdr pane layout --pane $root_pane'." >&2
+    return 1
+  fi
   herdr pane rename "$pane" "$name" >/dev/null
   herdr agent rename "$pane" "$name" >/dev/null
   herdr pane run "$pane" "$cmd" >/dev/null
   printf '%s\n' "$pane"
 }
+
+# Caller MUST check the status — `$(...)` hides it:
+#   p_reviewer="$(spawn_sub reviewer 'pi --thinking medium')" || { echo aborting >&2; exit 1; }
 
 p_reviewer=$(spawn_sub reviewer "pi --thinking medium")
 p_tests=$(spawn_sub tests "pi --thinking low")
@@ -81,7 +90,7 @@ p_tests=$(spawn_sub tests "pi --thinking low")
 |---|---|
 | Target pane | current rightmost column (`rect.x` order) |
 | Direction | always `right` — one row of columns, never `down` |
-| Split ratio | `(N-1)/N` (the planner emits it) so the new pane is born at `1/N` |
+| Split ratio | `1/N` (the planner emits it) — `--ratio R` is the existing/left child's share, so the new right pane gets `1-R = (N-1)/N` of the split column = the `1/N` equal target of the tab |
 | After each spawn | run `--equalize` — a split alone can't shrink the pre-existing columns |
 | Re-run per spawn | never hardcode a fixed ratio — it shrinks every time |
 | Focus | always `--no-focus` |
@@ -109,9 +118,16 @@ before/after (close the probe tab when done — never probe the session's own
 tab). Results:
 
 - **`pane split <p> --direction right --ratio R`** — `R` is the fraction the
-  **existing (left) child** keeps of the pane `p`; the new pane gets `1 - R`.
-  It resizes only `p`; the other columns are untouched. So a single split can
-  never equalize `N >= 3` columns. (`--ratio 0.5` on a 210-cell tab → 105/105.)
+  **existing (left) child** keeps of the pane `p`; the new (right) pane gets
+  `1 - R`. It resizes only `p`; the other columns are untouched. So a single
+  split can never equalize `N >= 3` columns. (`--ratio 0.5` on a 210-cell tab
+  → 105/105.) To add column N we split the rightmost column at **`R = 1/N`**:
+  when the N-1 existing columns are equal, the rightmost is `1/(N-1)` of the
+  tab, so the new pane's `(1-R) = (N-1)/N` share of it equals `1/N` of the
+  whole tab — the equal target. Verified live: from 105/105, splitting the
+  rightmost at `--ratio 0.333` (=1/3) gives a new pane of 70 (= 210/3), i.e.
+  the equal target — NOT 35, which is what the earlier inverted `(N-1)/N`
+  value produced. The equalizer then fixes the disturbed inner columns.
 - **`pane resize --pane P --direction D --amount A`** — `A` is a **delta**, a
   fraction of the whole tab area width (`A * area_width` cells), *not* an
   absolute target width. `--direction D` moves the edge on side `D`: a pane
@@ -131,7 +147,11 @@ toward its target cumulative position by **growing the neighbor-bearing pane**
 (boundary must move right → `resize left_col right`; must move left →
 `resize right_col left`), re-reading the layout after every resize; repeat
 until the width spread is ≤1 cell (cap 12 passes). Verified end-to-end via the
-script: 2 cols → 105/105, 3 → 70/70/70, 4 → 53/53/52/52, 5 → 42×5.
+script: 2 cols → 105/105, 3 → 70/70/70, 4 → 53/53/52/52, 5 → 42×5. A failed
+`herdr pane resize` (nonzero exit) or non-convergence within the pass cap is a
+**hard error**: `--equalize` exits non-zero with an actionable message naming
+the pane/direction/amount (or the final widths), and the spawn recipes abort
+instead of launching a worker into an uneven layout.
 
 **Manual equalize** (helper unavailable): for a tab of width `W` with `N`
 columns, target each column ≈ `W/N`. Repeat this sweep until widths stop
@@ -165,8 +185,13 @@ plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
 read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
 j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)
 pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')
-# Equalize all columns — a split alone leaves the pre-existing columns wide.
-python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >/dev/null 2>&1 || true
+# Equalize all columns — HARD GATE: abort (and close the orphan pane) rather
+# than run the log tail into an uneven layout.
+if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane"; then
+  echo "Error: equalize failed; not launching log pane. Orphan: $pane (herdr pane close $pane to undo)." >&2
+  herdr pane close "$pane" >/dev/null 2>&1 || true
+  exit 1
+fi
 herdr pane rename "$pane" logs
 herdr pane run "$pane" "bash -lc 'tail -f /tmp/app.log'"
 ```
