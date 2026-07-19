@@ -10,12 +10,18 @@ Read this when you need layout variants, multi-line sends, human steer/focus, sc
 Session (default)
 └── Workspace: <project>
     └── Tab: <root's tab>                 ← single grid view
-        ┌───────────────────────────┐
-        │ root (you)                │
-        ├─────────────┬─────────────┤
-        │ reviewer    │ tests       │
-        └─────────────┴─────────────┘
+        ┌─────────────┬─────────────┐
+        │ root (you)  │ tests       │
+        ├─────────────┴─────────────┤
+        │ reviewer                  │
+        └────────────────────────────┘
 ```
+
+(`next_grid_split.py` always retargets the largest pane, so which sub-agent
+lands where depends on split order and live geometry — root can end up
+top-left rather than a full-width top strip. Either way root starts on top
+after the first, always-`down` split, and stays in the grid at a comparable
+size to its workers.)
 
 Why this default: the human sees the **root agent and every sub-agent together at usable sizes**; the orchestrator is never displaced into a side tab; sidebar still rolls status per workspace.
 
@@ -28,8 +34,17 @@ root_pane="${HERDR_PANE_ID:?}"
 root_tab="${HERDR_TAB_ID:?}"
 ws="${HERDR_WORKSPACE_ID:?}"
 project_dir=$(pwd)
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # when run from scripts/
-# or: here=skills/herdr-agent-comms/scripts
+# Resolve scripts/ by probing known install locations. Don't derive from
+# $0/BASH_SOURCE here — unreliable when an agent runs this inline rather
+# than as a saved script file.
+here=""
+for cand in \
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts"; do
+  if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
+done
 
 spawn_sub() {
   local name=$1 cmd=$2
@@ -55,12 +70,14 @@ p_tests=$(spawn_sub tests "pi --thinking low")
 |---|---|
 | Target pane | largest area in the tab (`width * height`) |
 | Tie-break | prefer root pane |
-| Direction | **`down` if target height ≥ width** (vertical first), else `right` |
+| Direction (first split) | always `down` — vertical panel first, independent of aspect |
+| Direction (later splits) | `down` if target height ≥ width, else `right` |
 | After each spawn | re-run the chooser — never hardcode a fixed dir sequence |
 | Focus | always `--no-focus` |
 
 ```bash
-python3 scripts/next_grid_split.py --root-pane "$root_pane"
+# $here from the resolver above (or re-probe if starting fresh in this shell)
+python3 "$here/next_grid_split.py" --root-pane "$root_pane"
 herdr pane layout --pane "$root_pane"   # verify balanced rects
 ```
 
@@ -92,7 +109,8 @@ done
 ### Adding a log / shell pane into the grid
 
 ```bash
-read -r split_from dir < <(python3 scripts/next_grid_split.py --root-pane "$root_pane")
+# $here from the resolver above (or re-probe if starting fresh in this shell)
+read -r split_from dir < <(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
 j=$(herdr pane split "$split_from" --direction "$dir" --cwd "$project_dir" --no-focus)
 pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')
 herdr pane rename "$pane" logs
@@ -165,6 +183,15 @@ Prefer `recent-unwrapped` for agent transcripts. Widen `--lines` stepwise if tru
 Prefer `scripts/broadcast.sh`. Manual equivalent:
 
 ```bash
+here=""
+for cand in \
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts"; do
+  if [ -f "$cand/wait_for_idle.py" ]; then here="$cand"; break; fi
+done
+
 targets=(reviewer tests docs)
 msg="Pull latest main and report branch + dirty state."
 
@@ -190,7 +217,7 @@ for i in "${!panes[@]}"; do
 done
 
 for i in "${!panes[@]}"; do
-  python3 scripts/wait_for_idle.py "${panes[$i]}" --timeout 180 --lines 80 \
+  python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
 done
 wait

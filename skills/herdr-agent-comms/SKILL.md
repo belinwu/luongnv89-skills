@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.3.1
+  version: 1.4.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -26,15 +26,16 @@ Default layout after spawning three sub-agents (balanced grid including root; **
 
 ```
 Tab (root's tab)
-┌───────────────────────────┐
-│ root (you)                │
-├─────────────┬─────────────┤
-│ reviewer    │ tests       │
-├─────────────┴─────────────┤
-│ docs                      │
-└───────────────────────────┘
+┌─────────────┬─────────────┐
+│ root (you)  │ reviewer    │
+├─────────────┼─────────────┤
+│ tests       │ docs        │
+└─────────────┴─────────────┘
 ```
-(Exact tiles depend on aspect ratios; first split prefers `down`.)
+(Exact tiles depend on aspect ratios and live geometry — `next_grid_split.py` always
+picks the largest pane, so later splits may target root or a sub-agent pane. The first
+split always prefers `down`, so root starts on top; the largest-pane rule tends to grid
+root and its workers into roughly equal tiles rather than one full column.)
 
 You orchestrate with the `herdr` CLI. Prefer agent-status waits over scrollback polling. Relay each agent's answer, not its whole screen.
 
@@ -118,8 +119,19 @@ Do **not** always split `$root_pane`. Always pick the current largest cell so ro
 ```bash
 project_dir=/path/to/project   # usually root pane cwd
 root_pane="$HERDR_PANE_ID"     # from Phase 1
-here="$(cd "$(dirname "$0")" 2>/dev/null; pwd)"  # skill scripts/ when known
-# or: here=skills/herdr-agent-comms/scripts
+
+# Resolve scripts/ robustly: $0 is unreliable when an agent runs this inline
+# (it points at the shell, not the skill), so probe known install locations
+# instead of deriving from $0.
+here=""
+for cand in \
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts"; do
+  if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
+done
+[ -n "$here" ] || { echo "next_grid_split.py not found — set \$here manually" >&2; }
 name=reviewer
 agent_cmd='pi --thinking medium'
 # optional skills for pi:  --skill /path/to/SKILL.md
@@ -151,7 +163,7 @@ herdr agent rename "$sub_pane" "$name" >/dev/null
 herdr pane run "$sub_pane" 'pi --thinking low' >/dev/null
 ```
 
-**Manual fallback** when the helper is unavailable: inspect `herdr pane layout --pane "$root_pane"`, split the largest pane by `rect.width * rect.height`, use **`down` if height ≥ width else `right`**. Stay on `root_tab`.
+**Manual fallback** when the helper is unavailable: inspect `herdr pane layout --pane "$root_pane"`, split the largest pane by `rect.width * rect.height`. If this is the **first** split (only one pane exists), use `down` unconditionally — most terminals are wider than tall, so an aspect check alone would pick `right` and contradict vertical-panel-first. For later splits, use **`down` if height ≥ width else `right`**. Stay on `root_tab`.
 
 **Alternative** (same tab, less balanced): `herdr agent start` into the root tab:
 
@@ -165,7 +177,7 @@ Prefer **`next_grid_split.py` + `pane split`** so the grid includes root and sta
 **Grid rules:**
 1. One tab only: root + every sub-agent.
 2. Before each split, choose the **largest** pane in that tab (tie-break: root).
-3. Direction from that pane's aspect: **`down` when taller or square** (vertical panel first), `right` only when clearly wider.
+3. Direction: the **first** split is always `down` (vertical panel first, regardless of aspect — real terminals are usually wider than tall). Later splits follow the target pane's aspect: **`down` when taller or square**, `right` only when clearly wider.
 4. Always `--no-focus` so the root keeps the keyboard.
 5. Optional check: `herdr pane layout --pane "$root_pane"` should show multiple similar-sized rects, not one huge pane and thin strips.
 
@@ -261,7 +273,19 @@ fi
 Use Herdr status waits (not fixed `sleep`). Completion may be **`done`** (unseen, usually background) **or `idle`** (seen / focused tab) — wait for either. Prefer the helper with the Phase 4 pre-send baseline; without it, a fast agent can finish before the waiter snapshots the pane and leave the root waiting until timeout:
 
 ```bash
-python3 scripts/wait_for_idle.py "$pane_id" --timeout 180 --lines 80 \
+# $here is the scripts/ dir. If Phase 2 already resolved it, reuse it;
+# jumping straight here (e.g. "message an agent that's already running")
+# skips Phase 2, so probe install locations again rather than assume it's set.
+if [ -z "${here:-}" ]; then
+  for cand in \
+    "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+    ".claude/skills/herdr-agent-comms/scripts" \
+    "$HOME/.agents/skills/herdr-agent-comms/scripts" \
+    "skills/herdr-agent-comms/scripts"; do
+    if [ -f "$cand/wait_for_idle.py" ]; then here="$cand"; break; fi
+  done
+fi
+python3 "$here/wait_for_idle.py" "$pane_id" --timeout 180 --lines 80 \
   --baseline-file "$baseline_file" --completion-marker "$completion_marker"
 rc=$?
 rm -f "$baseline_file"
@@ -283,7 +307,7 @@ while (( SECONDS < deadline )); do
     *) sleep 2 ;;
   esac
 done
-# Or: python3 scripts/wait_for_idle.py "$pane_id" --timeout 180
+# Or use the helper instead (resolve $here first — see the block above).
 ```
 
 Treat **either `idle` or `done` as completed** — difference is only whether the result was seen. Never wait only on `done` for the full budget: a focused-tab finish stays `idle` and will time out.
@@ -357,7 +381,16 @@ root_tab="$HERDR_TAB_ID"
 ws="$HERDR_WORKSPACE_ID"
 project_dir="$(pwd)"
 
-here="skills/herdr-agent-comms/scripts"  # adjust if installed elsewhere
+# Resolve scripts/ by probing known install locations (not $0 — unreliable
+# when this snippet runs inline rather than as a saved script file).
+here=""
+for cand in \
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts"; do
+  if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
+done
 spawn_sub() {
   local name="$1" cmd="$2"
   local split_from dir split_json pane
@@ -384,10 +417,10 @@ herdr pane run "$p1" "Review recent commits for risk; bullet findings only. When
 herdr pane run "$p2" "Outline a minimal test plan. When finished, concatenate and print: HERDR_DONE_ and $s2"
 
 # Same tab: root_pane + p1 + p2
-python3 scripts/wait_for_idle.py "$p1" --timeout 180 --lines 80 --baseline-file "$b1" --completion-marker "HERDR_DONE_$s1"
-python3 scripts/wait_for_idle.py "$p2" --timeout 180 --lines 80 --baseline-file "$b2" --completion-marker "HERDR_DONE_$s2"
+python3 "$here/wait_for_idle.py" "$p1" --timeout 180 --lines 80 --baseline-file "$b1" --completion-marker "HERDR_DONE_$s1"
+python3 "$here/wait_for_idle.py" "$p2" --timeout 180 --lines 80 --baseline-file "$b2" --completion-marker "HERDR_DONE_$s2"
 rm -f "$b1" "$b2"
-# optional: use scripts/broadcast.sh to baseline/send/wait concurrently
+# optional: use "$here/broadcast.sh" to baseline/send/wait concurrently
 # optional: herdr agent focus reviewer
 ```
 

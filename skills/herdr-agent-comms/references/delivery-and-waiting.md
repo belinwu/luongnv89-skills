@@ -56,8 +56,15 @@ Both mean "not working anymore." After a task:
 Orchestrator pattern — **accept either terminal state**; do not spend the whole budget on `done` alone (focused tabs finish as `idle`):
 
 ```bash
-# Preferred helper. The pre-send baseline closes the fast-completion race:
-python3 scripts/wait_for_idle.py "$pane" --timeout 180 --lines 80 \
+# Preferred helper. The pre-send baseline closes the fast-completion race.
+# $here = scripts/ dir; probe install locations, don't derive from $0/BASH_SOURCE:
+#   for cand in "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+#               ".claude/skills/herdr-agent-comms/scripts" \
+#               "$HOME/.agents/skills/herdr-agent-comms/scripts" \
+#               "skills/herdr-agent-comms/scripts"; do
+#     [ -f "$cand/wait_for_idle.py" ] && here="$cand" && break
+#   done
+python3 "$here/wait_for_idle.py" "$pane" --timeout 180 --lines 80 \
   --baseline-file "$baseline" --completion-marker "$completion_marker"
 rc=$?
 rm -f "$baseline"
@@ -111,7 +118,7 @@ On timeout:
 Integrations missing or exotic CLI:
 
 1. `herdr integration install <agent>` when supported
-2. Fall back to content stability: `python3 scripts/wait_for_idle.py <pane_id>`
+2. Fall back to content stability: `python3 "$here/wait_for_idle.py" <pane_id>` (`$here` = resolved scripts/ dir — probe install locations, not `$0`)
 3. Still use capped `pane read` for the reply
 
 The helper mirrors tmux-agent-comms' wait semantics (exit 0 idle / 2 timeout / 3 blocked markers) but reads via `herdr pane read` instead of `tmux capture-pane`.
@@ -134,7 +141,7 @@ After fully finishing, concatenate and print: HERDR_DONE_ and $suffix"
 done
 for i in "${!panes[@]}"; do herdr pane run "${panes[$i]}" "${tasks[$i]}"; done
 for i in "${!panes[@]}"; do
-  python3 scripts/wait_for_idle.py "${panes[$i]}" --timeout 180 --lines 80 \
+  python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
 done
 wait

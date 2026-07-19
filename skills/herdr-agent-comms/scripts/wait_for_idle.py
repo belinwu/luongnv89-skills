@@ -266,12 +266,26 @@ def main() -> int:
                 marker_seen = (
                     args.completion_marker is not None
                     and args.completion_marker in cur
+                    and args.completion_marker not in baseline
                 )
-                if args.ready or saw_working or marker_seen:
+                if args.ready:
                     if not args.no_print:
                         print_delta(baseline, cur, args.full)
                     return 0
-                if saw_work and args.completion_marker is None:
+                if args.completion_marker is not None:
+                    # Marker mode: only a fresh marker (absent from baseline) proves
+                    # THIS send finished. A stale `saw_working` from a pane that was
+                    # already busy before this send must not short-circuit success.
+                    if marker_seen:
+                        if not args.no_print:
+                            print_delta(baseline, cur, args.full)
+                        return 0
+                    # Not seen yet: keep waiting (fall through to re-poll below).
+                elif saw_working:
+                    if not args.no_print:
+                        print_delta(baseline, cur, args.full)
+                    return 0
+                elif saw_work:
                     # Legacy fallback when no marker was arranged before send.
                     break
                 # Pre-task idle: wait for working (or transcript change via status loop)
@@ -306,7 +320,11 @@ def main() -> int:
             saw_work = True
             saw_working = True
         cur = pane_read(pane_id, args.lines)
-        if args.completion_marker and args.completion_marker in cur:
+        if (
+            args.completion_marker
+            and args.completion_marker in cur
+            and args.completion_marker not in baseline
+        ):
             if not args.no_print:
                 print_delta(baseline, cur, args.full)
             return 0

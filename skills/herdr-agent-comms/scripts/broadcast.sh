@@ -57,12 +57,37 @@ except Exception:
 '
 }
 
-# Phase 1: resolve all targets first
+pane_status() {
+  herdr pane get "$1" 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d["result"]["pane"].get("agent_status", ""))
+except Exception:
+    print("")
+'
+}
+
+# Phase 1: resolve all targets first, deduping by pane id so a name and its
+# pane-id alias (e.g. "reviewer" and "w26:p4") don't double-send.
+# (Plain arrays + linear scan, not associative arrays: this needs to run on
+# bash 3.2 too, e.g. macOS's default /bin/bash.)
 panes=()
 labels=()
 missing=()
 for t in "${targets[@]}"; do
   if p="$(resolve_pane "$t")"; then
+    dup=""
+    for existing in "${panes[@]+"${panes[@]}"}"; do
+      if [ "$existing" = "$p" ]; then
+        dup=1
+        break
+      fi
+    done
+    if [ -n "$dup" ]; then
+      echo "Note: '$t' resolves to an already-targeted pane $p — skipping duplicate." >&2
+      continue
+    fi
     panes+=("$p")
     labels+=("$t")
   else
@@ -72,6 +97,34 @@ done
 if [ "${#missing[@]}" -gt 0 ]; then
   echo "Error: these targets don't resolve: ${missing[*]}" >&2
   echo "List them with: herdr agent list" >&2
+  exit 1
+fi
+
+# Phase 1b: reject panes already busy with other work before we send — a pane
+# that is already `working` did not start working because of THIS broadcast,
+# so waiting on it afterward cannot reliably distinguish this send's
+# completion from the prior task's. Skip busy panes rather than risk a false
+# "settled" report.
+busy=()
+ready_panes=()
+ready_labels=()
+for i in "${!panes[@]}"; do
+  st="$(pane_status "${panes[$i]}")"
+  if [ "$st" = "working" ]; then
+    busy+=("${labels[$i]} (${panes[$i]})")
+    continue
+  fi
+  ready_panes+=("${panes[$i]}")
+  ready_labels+=("${labels[$i]}")
+done
+if [ "${#busy[@]}" -gt 0 ]; then
+  echo "Error: these targets are already working and were skipped: ${busy[*]}" >&2
+  echo "Wait for them to go idle/done first, or target only the idle agents." >&2
+fi
+panes=("${ready_panes[@]+"${ready_panes[@]}"}")
+labels=("${ready_labels[@]+"${ready_labels[@]}"}")
+if [ "${#panes[@]}" -eq 0 ]; then
+  echo "Error: no targets left to send to." >&2
   exit 1
 fi
 
@@ -121,6 +174,9 @@ for pid in "${pids[@]}"; do wait "$pid"; done
 
 # Phase 5: emit labeled blocks
 overall=0
+if [ "${#busy[@]}" -gt 0 ]; then
+  overall=1
+fi
 for i in "${!panes[@]}"; do
   label="${labels[$i]}"
   p="${panes[$i]}"

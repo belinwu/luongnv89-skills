@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Behavioral tests for broadcast.sh against a fake `herdr` CLI.
+
+Covers:
+  P2.6 - name+pane aliases resolving to the same pane must not double-send.
+  P1.1 - a pane already `working` before the broadcast must be rejected,
+         not silently waited on as if this broadcast made it busy.
+
+Run directly (stdlib unittest only):
+    python3 -m unittest discover -s skills/herdr-agent-comms/tests -p 'test_*.py'
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SCRIPTS = HERE.parent / "scripts"
+FAKE_BIN = HERE / "bin"
+BROADCAST = SCRIPTS / "broadcast.sh"
+
+
+class FakeHerdrHarness:
+    def __init__(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="hac_bcast_test_")
+        self.state_path = os.path.join(self.tmpdir, "state.json")
+        self.write_state({"panes": {}})
+        self.env = dict(os.environ)
+        self.env["FAKE_HERDR_STATE"] = self.state_path
+        self.env["PATH"] = f"{FAKE_BIN}{os.pathsep}{self.env.get('PATH', '')}"
+
+    def write_state(self, state):
+        with open(self.state_path, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+
+    def read_state(self):
+        with open(self.state_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def set_pane(self, pane_id, status, text, name=None):
+        state = self.read_state()
+        state["panes"][pane_id] = {"agent_status": status, "text": text, "name": name}
+        self.write_state(state)
+
+    def set_status(self, pane_id, status):
+        state = self.read_state()
+        state["panes"][pane_id]["agent_status"] = status
+        self.write_state(state)
+
+    def append_text(self, pane_id, text):
+        state = self.read_state()
+        state["panes"][pane_id]["text"] += text
+        self.write_state(state)
+
+    def count_pane_run_invocations(self, pane_id):
+        state = self.read_state()
+        text = state["panes"][pane_id]["text"]
+        return text.count("$ ")
+
+    def run_broadcast(self, msg, targets, timeout=8, env_extra=None):
+        env = dict(self.env)
+        env["HAC_TIMEOUT"] = str(timeout - 2)
+        if env_extra:
+            env.update(env_extra)
+        cmd = ["bash", str(BROADCAST), msg] + list(targets)
+        return subprocess.run(cmd, env=env, text=True, capture_output=True, timeout=timeout + 15)
+
+
+class BroadcastDedupeTests(unittest.TestCase):
+    def setUp(self):
+        self.h = FakeHerdrHarness()
+
+    def test_name_and_pane_alias_send_only_once(self):
+        """P2.6: 'reviewer' and its own pane id 'p1' both resolve to pane p1
+        — broadcast must send exactly once, not twice."""
+        self.h.set_pane("p1", "idle", "boot complete\n", name="reviewer")
+
+        def finish_quickly():
+            time.sleep(0.3)
+            self.h.set_status("p1", "working")
+            time.sleep(0.2)
+            st = self.h.read_state()
+            sent_text = st["panes"]["p1"]["text"]
+            # Extract the marker suffix from the sent task text and echo the
+            # joined marker back, as a real agent's reply would.
+            m = re.search(r"HERDR_DONE_ and (\S+)", sent_text)
+            if m:
+                self.h.append_text("p1", f"HERDR_DONE_{m.group(1)}\n")
+            self.h.set_status("p1", "idle")
+
+        t = threading.Thread(target=finish_quickly)
+        t.start()
+        cp = self.h.run_broadcast("do the thing", ["reviewer", "p1"], timeout=6)
+        t.join()
+
+        sends = self.h.count_pane_run_invocations("p1")
+        self.assertEqual(sends, 1, msg=f"expected exactly 1 send, got {sends}. stdout={cp.stdout!r} stderr={cp.stderr!r}")
+        self.assertIn("skipping duplicate", cp.stderr.lower())
+
+    def test_already_working_pane_is_rejected_not_sent(self):
+        """P1.1: a pane that is already `working` before broadcast starts
+        must be skipped, never sent to (can't distinguish its completion
+        from a send this broadcast never made)."""
+        self.h.set_pane("busy1", "working", "prior task in flight\n", name="busy")
+        self.h.set_pane("idle1", "idle", "ready\n", name="ready")
+
+        def finish_ready():
+            time.sleep(0.2)
+            st = self.h.read_state()
+            sent_text = st["panes"]["idle1"]["text"]
+            m = re.search(r"HERDR_DONE_ and (\S+)", sent_text)
+            if m:
+                self.h.append_text("idle1", f"HERDR_DONE_{m.group(1)}\n")
+            self.h.set_status("idle1", "idle")
+
+        t = threading.Thread(target=finish_ready)
+        t.start()
+        cp = self.h.run_broadcast("do the thing", ["busy", "ready"], timeout=6)
+        t.join()
+
+        # busy pane must never have received a pane run (no new "$ " line)
+        busy_sends = self.h.count_pane_run_invocations("busy1")
+        self.assertEqual(busy_sends, 0, msg=f"busy pane should not be sent to. stdout={cp.stdout!r}")
+        self.assertIn("already working", cp.stderr.lower())
+        # overall exit must be non-zero since a target was skipped
+        self.assertNotEqual(cp.returncode, 0)
+        # the ready pane should still be reported as settled
+        self.assertIn("ready", cp.stdout)
+
+    def test_all_busy_exits_error_with_nothing_sent(self):
+        self.h.set_pane("busy1", "working", "prior\n", name="busy")
+        cp = self.h.run_broadcast("do the thing", ["busy"], timeout=4)
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertEqual(self.h.count_pane_run_invocations("busy1"), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -82,7 +82,14 @@ def choose_target(panes: list[dict], root_pane: str | None) -> tuple[str, str]:
     if best is None:
         raise SystemExit("no usable pane rects in layout")
 
-    # Prefer vertical panels first: stack top/bottom unless the cell is clearly wider.
+    # First split of a single-pane layout always goes down: this is the
+    # documented "vertical panel first" default (root on top, first worker
+    # below), independent of aspect ratio (most terminals are wider than
+    # tall, so a plain aspect check would pick `right` here instead).
+    if len(panes) == 1:
+        return best["pane_id"], "down"
+
+    # Later splits: direction follows the target cell's own aspect.
     direction = "down" if best["height"] >= best["width"] else "right"
     return best["pane_id"], direction
 
