@@ -441,14 +441,14 @@ for p in "$p1" "$p2"; do
   rpids+=("$!:$p")
 done
 for e in "${rpids[@]}"; do jp="${e%%:*}"; pane="${e#*:}"
-  wait "$jp" || { ready_failed=1; echo "$pane: not ready (rc $?)" >&2; }
+  wait "$jp" || { rc=$?; ready_failed=1; echo "$pane: not ready (rc $rc)" >&2; }
 done
 [ "$ready_failed" -eq 0 ] || { echo "Fleet not ready; not assigning work." >&2; exit 1; }
 
 # Assign + collect: prefer the script — it baselines, sends, waits concurrently,
-# and aggregates every send/waiter status into its exit code (see findings this
-# skill has hardened). Check its exit; do not treat a partial fleet as success.
-"$here/broadcast.sh" "Review recent commits for risk; bullet findings only." reviewer \
+# and aggregates every send/waiter status into its exit code. Check its exit;
+# broadcast BOTH placed agents so neither is spawned then left idle.
+"$here/broadcast.sh" "Review recent commits for risk; bullet findings only." reviewer tests \
   || { echo "broadcast reported failures (blocked/timeout/unverifiable) — see above" >&2; exit 1; }
 # For the manual (non-script) baseline→send→wait pattern with per-waiter status
 # aggregation, see references/delivery-and-waiting.md "Concurrent fleet waits".
