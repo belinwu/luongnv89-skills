@@ -48,7 +48,7 @@ class FakeHerdrHarness:
             return json.load(f)
 
     def set_pane(self, pane_id, status, text, name=None, fail_run=False,
-                 fail_get=False, malformed_get=False,
+                 fail_get=False, malformed_get=False, null_pane_get=False,
                  status_after=None, status_flip_to=None):
         state = self.read_state()
         pane = {
@@ -58,6 +58,7 @@ class FakeHerdrHarness:
             "fail_run": fail_run,
             "fail_get": fail_get,
             "malformed_get": malformed_get,
+            "null_pane_get": null_pane_get,
         }
         if status_after is not None:
             pane["status_after"] = status_after
@@ -213,6 +214,20 @@ class BroadcastDedupeTests(unittest.TestCase):
         self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0,
                          msg=f"malformed-status pane must not be sent to. stdout={cp.stdout!r}")
         self.assertNotEqual(cp.returncode, 0)
+
+    def test_null_pane_status_is_rejected_cleanly_not_traceback(self):
+        """Round 13 note: a valid-JSON 0-exit `pane get` with a null `pane`
+        ({"result":{"pane":null}}) must be rejected as unverifiable WITHOUT an
+        AttributeError traceback (None.get(...)) leaking to stderr. Rejected +
+        not sent + non-zero exit, and no Python traceback."""
+        self.h.set_pane("bad1", "idle", "resolves but pane is null\n",
+                        name="nullp", null_pane_get=True)
+        cp = self.h.run_broadcast("do the thing", ["nullp"], timeout=4)
+        self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0,
+                         msg=f"null-pane must not be sent to. stdout={cp.stdout!r}")
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertNotIn("Traceback", cp.stderr)
+        self.assertNotIn("AttributeError", cp.stderr)
 
     def test_offenum_numeric_status_is_rejected_not_sent(self):
         """Regression (round 10, finding #1): a 0-exit `herdr pane get` that

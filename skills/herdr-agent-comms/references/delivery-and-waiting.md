@@ -27,14 +27,7 @@ After `pane run` / send:
 `$sd` below is the skill's `scripts/` dir (resolve it as SKILL.md Phase 4/5 do: probe repo-local then `.agents/`, `.claude/`, `$HOME`).
 
 ```bash
-# $sd = the skill's scripts/ dir. FAIL-CLOSED preflight before EVERY send —
-# the single-target twin of broadcast.sh Phase 1b. Refuse to type a task into a
-# working (rc 2), blocked (rc 3), or unverifiable/off-enum (rc 4) pane; only
-# idle/done/unknown (rc 0) is safe. Skipping this let a task be typed into a
-# blocked trust dialog and still report success.
-python3 "$sd/preflight_send.py" "$pane" >/dev/null \
-  || { echo "Error: $pane not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
-
+# $sd = the skill's scripts/ dir.
 baseline="$(mktemp)"
 herdr pane read "$pane" --source recent-unwrapped --lines 80 >"$baseline" \
   || { echo "Error: baseline read failed for $pane" >&2; exit 1; }
@@ -43,7 +36,15 @@ completion_marker="HERDR_DONE_$suffix"
 task="do the thing
 
 After fully finishing, concatenate and print these parts without spaces: HERDR_DONE_ and $suffix"
-herdr pane run "$pane" "$task" || { echo "Error: send failed for $pane" >&2; exit 1; }
+# FAIL-CLOSED preflight IMMEDIATELY before dispatch — the single-target twin of
+# broadcast.sh's pre-dispatch recheck. Placed here (not before baseline/task
+# prep) so a target that turned working/blocked during that prep can't still be
+# sent into. Refuse to type into a working (rc 2), blocked (rc 3), or
+# unverifiable/off-enum (rc 4) pane; only idle/done/unknown (rc 0) is safe —
+# skipping it let a task land in a blocked trust dialog and report success.
+python3 "$sd/preflight_send.py" "$pane" >/dev/null \
+  || { echo "Error: $pane not safe to send to (preflight failed) — see stderr" >&2; rm -f "$baseline"; exit 1; }
+herdr pane run "$pane" "$task" || { echo "Error: send failed for $pane" >&2; rm -f "$baseline"; exit 1; }
 if herdr wait agent-status "$pane" --status working --timeout 15000; then
   echo delivered
 else
@@ -110,13 +111,13 @@ case "$rc" in
   *) echo "$pane: waiter failed (rc $rc)" >&2; exit "$rc" ;;
 esac
 
-# Manual alternative: poll pane get for idle|done|blocked. FAIL-CLOSED status
-# read — a failed/malformed `herdr pane get` errors out rather than sleeping.
-# Track the OUTCOME and propagate it: `blocked` must exit 3 and deadline
-# exhaustion must exit 2. Breaking out silently (or letting the while condition
-# lapse) would fall through with status 0 — reporting a blocked/timed-out wait
-# as a successful completion.
-deadline=$((SECONDS + 180)); settled=""
+# Helper-free alternative (no wait_for_idle.py). A hand-rolled `pane get` poll
+# must NOT accept the first idle/done it sees: a pane idle BEFORE the task
+# started (send not yet landed, or a prior fast task) would be a FALSE
+# completion for THIS send. Gate acceptance on having first observed `working`
+# (or a fresh completion marker absent from the pre-send baseline). Track the
+# outcome and propagate it: `blocked` exits 3, deadline exhaustion exits 2.
+deadline=$((SECONDS + 180)); settled=""; saw_working=""
 while (( SECONDS < deadline )); do
   out=$(herdr pane get "$pane" 2>/dev/null) || { echo "status lookup failed for $pane" >&2; exit 1; }
   st=$(printf '%s' "$out" | python3 -c 'import sys,json
@@ -125,15 +126,24 @@ try: r=json.load(sys.stdin)["result"]["pane"].get("agent_status")
 except Exception: sys.exit(1)
 print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))') \
     || { echo "status parse failed / off-enum for $pane" >&2; exit 1; }
+  # A fresh joined marker in the transcript (not in the baseline) also proves
+  # completion even if we never caught the `working` window.
+  if grep -qF "$completion_marker" <(herdr pane read "$pane" --source recent-unwrapped --lines 80 2>/dev/null) \
+     && ! grep -qF "$completion_marker" "$baseline"; then
+    settled="marker"; break
+  fi
   case "$st" in
-    done|idle) settled="$st"; break ;;
-    blocked) echo "$pane: BLOCKED — a human must answer a dialog" >&2; exit 3 ;;
-    working) herdr wait agent-status "$pane" --status done --timeout 15000 \
+    working) saw_working=1
+             herdr wait agent-status "$pane" --status done --timeout 15000 \
                || herdr wait agent-status "$pane" --status idle --timeout 15000 || true ;;
+    done|idle) [ -n "$saw_working" ] && { settled="$st"; break; }  # else pre-task idle: keep waiting
+               sleep 2 ;;
+    blocked) echo "$pane: BLOCKED — a human must answer a dialog" >&2; rm -f "$baseline"; exit 3 ;;
     *) sleep 2 ;;
   esac
 done
-[ -n "$settled" ] || { echo "$pane: TIMEOUT before completion" >&2; exit 2; }
+rm -f "$baseline"
+[ -n "$settled" ] || { echo "$pane: TIMEOUT before completion (never saw working / fresh marker)" >&2; exit 2; }
 echo "settled:$settled"
 ```
 
@@ -181,9 +191,19 @@ The helper mirrors tmux-agent-comms' wait semantics (exit 0 idle / 2 timeout / 3
 
 Capture every baseline first, then send all, then wait concurrently. This order handles agents that finish before their waiter process starts.
 
-**Precondition:** `$panes` here must already be the deduped, **preflighted** target set — every entry passed the fail-closed working/blocked/unverifiable check (as `scripts/broadcast.sh` Phase 1b and the manual fleet recipe in `references/herdr-recipes.md` build it). Don't `pane run` a raw target list; a working/blocked/off-enum pane would be sent into blind. These illustrative loops send straight after baselining, so a target that turns working/blocked in that window is sent into anyway — prefer `scripts/broadcast.sh`, which **rechecks each target's status immediately before its dispatch** and skips any that became unsafe.
+**Precondition:** `$panes` here must already be the deduped, **preflighted** target set — every entry passed the fail-closed working/blocked/unverifiable check (as `scripts/broadcast.sh` Phase 1b and the manual fleet recipe in `references/herdr-recipes.md` build it). Don't `pane run` a raw target list; a working/blocked/off-enum pane would be sent into blind. The first loop below **rechecks each target's status immediately before its dispatch** and skips any that became working/blocked/unverifiable in the baseline→send window — matching `scripts/broadcast.sh`. Still prefer `scripts/broadcast.sh` for real use; these loops are illustrative.
 
 ```bash
+# Fail-closed, enum-validated status probe (returns non-zero on lookup/parse
+# failure or an off-enum value) — the same check broadcast.sh runs.
+pane_status() { local out
+  out="$(herdr pane get "$1" 2>/dev/null)" || return 1
+  printf '%s' "$out" | python3 -c 'import sys,json
+V={"idle","working","blocked","done","unknown"}
+try: r=json.load(sys.stdin)["result"]["pane"].get("agent_status")
+except Exception: sys.exit(1)
+print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))'; }
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT   # cleanup regardless of how we exit
 markers=()
@@ -198,21 +218,36 @@ for i in "${!panes[@]}"; do
 
 After fully finishing, concatenate and print: HERDR_DONE_ and $suffix"
 done
-# Send to all; a failed send must be recorded, not ignored.
-send_failed=()
+# Send to all. RECHECK status immediately before each dispatch (matching
+# broadcast.sh): the preflight/baseline loop above ran earlier, so a target may
+# have turned working/blocked (or become unverifiable) since — skip it rather
+# than send blind. Record send failures and became-unsafe skips BY INDEX so the
+# wait loop can exclude both (a name-keyed list can't be matched against $i).
+send_failed=(); became_unsafe=()
 for i in "${!panes[@]}"; do
-  herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("${panes[$i]}")
+  if ! st="$(pane_status "${panes[$i]}")" \
+     || [ "$st" = "working" ] || [ "$st" = "blocked" ]; then
+    echo "Error: ${panes[$i]} became unsafe (${st:-unverifiable}) before dispatch — skipped." >&2
+    became_unsafe+=("$i"); continue
+  fi
+  herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("$i")
 done
-# Wait concurrently, but capture EACH waiter's exit status (a bare `wait`
-# returns 0 for the shell even if a waiter timed out or hit `blocked`).
+# Wait concurrently on dispatched panes only (exclude send_failed AND
+# became_unsafe), capturing EACH waiter's exit status (a bare `wait` returns 0
+# for the shell even if a waiter timed out or hit `blocked`).
 pids=()
 for i in "${!panes[@]}"; do
+  skip=""
+  for f in ${send_failed[@]+"${send_failed[@]}"} ${became_unsafe[@]+"${became_unsafe[@]}"}; do
+    [ "$f" = "$i" ] && { skip=1; break; }
+  done
+  [ -n "$skip" ] && continue
   python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
   pids+=("$!:${panes[$i]}")
 done
 overall=0
-for e in "${pids[@]}"; do
+for e in "${pids[@]+"${pids[@]}"}"; do
   jp="${e%%:*}"; pane="${e#*:}"
   if wait "$jp"; then
     echo "$pane: reply ready"
@@ -227,34 +262,59 @@ for e in "${pids[@]}"; do
   fi
 done
 if [ "${#send_failed[@]}" -gt 0 ]; then
-  echo "Send failed for: ${send_failed[*]}" >&2
+  for i in "${send_failed[@]}"; do echo "Send failed for: ${panes[$i]}" >&2; done
   overall=1
 fi
-exit "$overall"   # non-zero if any send failed or any waiter didn't complete
+[ "${#became_unsafe[@]}" -eq 0 ] || overall=1
+exit "$overall"   # non-zero if any send/preflight failed or any waiter didn't complete
 ```
 
 Or with raw waits — **do not** wait only on `done` (focused fleet tabs usually finish as `idle`):
 
 ```bash
-send_failed=()
-for p in "${panes[@]}"; do herdr pane run "$p" "$msg" || send_failed+=("$p"); done
-pids=()
+_status() { local out; out="$(herdr pane get "$1" 2>/dev/null)" || return 1
+  printf '%s' "$out" | python3 -c 'import sys,json
+V={"idle","working","blocked","done","unknown"}
+try: r=json.load(sys.stdin)["result"]["pane"].get("agent_status")
+except Exception: sys.exit(1)
+print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))'; }
+send_failed=(); unsafe=()
 for p in "${panes[@]}"; do
+  # Recheck immediately before dispatch (matching broadcast.sh); skip if it
+  # turned working/blocked/unverifiable since the preflight.
+  if ! st="$(_status "$p")" || [ "$st" = working ] || [ "$st" = blocked ]; then
+    echo "Error: $p became unsafe (${st:-unverifiable}) before dispatch — skipped." >&2
+    unsafe+=("$p"); continue
+  fi
+  herdr pane run "$p" "$msg" || send_failed+=("$p")
+done
+# Build the wait set: dispatched panes only (exclude send_failed and unsafe).
+wait_panes=()
+for p in "${panes[@]}"; do
+  drop=""
+  for b in ${send_failed[@]+"${send_failed[@]}"} ${unsafe[@]+"${unsafe[@]}"}; do
+    [ "$b" = "$p" ] && { drop=1; break; }
+  done
+  [ -n "$drop" ] || wait_panes+=("$p")
+done
+pids=()
+for p in ${wait_panes[@]+"${wait_panes[@]}"}; do
   (
-    deadline=$((SECONDS + 180))
+    deadline=$((SECONDS + 180)); saw_working=""
     while (( SECONDS < deadline )); do
-      # Guard the status read — a failed `herdr pane get` must not be treated
-      # as an empty status that falls through to `sleep`; exit as an error.
-      out=$(herdr pane get "$p" 2>/dev/null) || exit 4
+      out=$(herdr pane get "$p" 2>/dev/null) || exit 4   # fail-closed status read
       st=$(printf '%s' "$out" | python3 -c 'import sys,json
 V={"idle","working","blocked","done","unknown"}
 try: r=json.load(sys.stdin)["result"]["pane"].get("agent_status")
 except Exception: sys.exit(1)
 print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))') || exit 4
       case "$st" in
-        done|idle) exit 0 ;;
+        # Accept idle/done ONLY after a `working` transition — a pane idle before
+        # the task landed would otherwise be a false completion for THIS send.
+        done|idle) [ -n "$saw_working" ] && exit 0; sleep 2 ;;
         blocked) exit 3 ;;
-        working) herdr wait agent-status "$p" --status done --timeout 15000 \
+        working) saw_working=1
+                 herdr wait agent-status "$p" --status done --timeout 15000 \
                    || herdr wait agent-status "$p" --status idle --timeout 15000 || true ;;
         *) sleep 2 ;;
       esac
@@ -264,14 +324,16 @@ print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exi
   pids+=("$!:$p")
 done
 overall=0
-for e in "${pids[@]}"; do
+for e in ${pids[@]+"${pids[@]}"}; do
   jp="${e%%:*}"; pane="${e#*:}"
   wait "$jp" || { rc=$?; overall=1
     case "$rc" in 3) echo "$pane: BLOCKED (human needed)" >&2 ;;
                   4) echo "$pane: status lookup failed" >&2 ;;
+                  2) echo "$pane: TIMEOUT (never saw working)" >&2 ;;
                   *) echo "$pane: not ready (rc $rc)" >&2 ;; esac; }
 done
 [ "${#send_failed[@]}" -eq 0 ] || { echo "Send failed: ${send_failed[*]}" >&2; overall=1; }
+[ "${#unsafe[@]}" -eq 0 ] || overall=1
 exit "$overall"
 ```
 

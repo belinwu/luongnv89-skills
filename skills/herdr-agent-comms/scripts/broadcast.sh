@@ -73,6 +73,11 @@ try:
     pane = d["result"]["pane"]
 except Exception:
     sys.exit(1)   # lookup/parse failure — NOT a safe empty status
+if not isinstance(pane, dict):
+    # Valid JSON but a null / non-object `pane` ({"result":{"pane":null}}):
+    # calling .get() would raise AttributeError (an ugly traceback). Treat it
+    # as an unverifiable status and exit cleanly.
+    sys.exit(1)
 raw = pane.get("agent_status")
 if raw is None:
     print("unknown")                 # validly absent (non-integrated CLI)

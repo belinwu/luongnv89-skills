@@ -398,16 +398,22 @@ for i in "${!panes[@]}"; do
     echo "Error: ${panes[$i]} became unsafe (${st:-unverifiable}) before dispatch — skipped." >&2
     became_unsafe+=("$i"); continue
   fi
-  herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("${panes[$i]}")
+  # Record a failed send BY INDEX (not pane id) so the wait loop below, which
+  # iterates indices, can actually exclude it — a name-keyed entry would never
+  # match `$i` and the failed target would get a pointless completion waiter.
+  herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("$i")
 done
 
 # Retain each waiter's exit status — a bare `wait` masks timeouts (rc 2) and
 # blocked (rc 3), so the whole broadcast would "succeed" with agents stuck.
-# Wait only on panes actually dispatched (skip became_unsafe / send_failed).
+# Wait only on panes actually dispatched (skip BOTH send_failed and
+# became_unsafe — both are index lists).
 pids=()
 for i in "${!panes[@]}"; do
   skip=""
-  for f in ${became_unsafe[@]+"${became_unsafe[@]}"}; do [ "$f" = "$i" ] && { skip=1; break; }; done
+  for f in ${send_failed[@]+"${send_failed[@]}"} ${became_unsafe[@]+"${became_unsafe[@]}"}; do
+    [ "$f" = "$i" ] && { skip=1; break; }
+  done
   [ -n "$skip" ] && continue
   python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
@@ -418,7 +424,7 @@ done
 # whole broadcast, not vanish.
 overall="$skipped_any"
 [ "${#became_unsafe[@]}" -eq 0 ] || overall=1
-for e in "${pids[@]}"; do
+for e in ${pids[@]+"${pids[@]}"}; do
   jp="${e%%:*}"; pane="${e#*:}"
   if wait "$jp"; then echo "$pane: reply ready"
   else rc=$?
@@ -428,7 +434,11 @@ for e in "${pids[@]}"; do
     overall=1
   fi
 done
-[ "${#send_failed[@]}" -eq 0 ] || { echo "Send failed for: ${send_failed[*]}" >&2; overall=1; }
+# send_failed holds INDICES — map back to pane ids for the report.
+if [ "${#send_failed[@]}" -gt 0 ]; then
+  for i in "${send_failed[@]}"; do echo "Send failed for: ${panes[$i]}" >&2; done
+  overall=1
+fi
 exit "$overall"
 ```
 
