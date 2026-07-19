@@ -44,11 +44,14 @@ class FakeHerdrHarness:
         with open(self.state_path, encoding="utf-8") as f:
             return json.load(f)
 
-    def set_pane(self, pane_id, status, text, name=None, fail_get=False):
+    def set_pane(self, pane_id, status, text, name=None, fail_get=False, fail_get_after=None):
         state = self.read_state()
         state["panes"][pane_id] = {
             "agent_status": status, "text": text, "name": name, "fail_get": fail_get,
         }
+        if fail_get_after is not None:
+            # pane get succeeds fail_get_after times, then fails every call after.
+            state["panes"][pane_id]["fail_get_after"] = fail_get_after
         self.write_state(state)
 
     def set_status(self, pane_id, status):
@@ -295,6 +298,30 @@ class WaitForIdleMarkerSemanticsTests(unittest.TestCase):
             "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "5"
         )
         self.assertEqual(cp.returncode, 0, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_ready_unknown_then_lookup_failure_is_error_not_ready(self):
+        """Regression (P round 9): the initial status is a VALID `unknown`
+        (passes the first probe → enters content-stability), then a LATER
+        `herdr pane get` fails. That later lookup failure must ALSO fail the
+        --ready check (rc 1), not be ignored so content stability reports a
+        false ready rc 0. `fail_get_after=1` = first lookup ok, then fail.
+        Small interval/quiet so, unfixed, stability would settle ready fast."""
+        self.h.set_pane("p1", "unknown", "stable output\n", name="flaky", fail_get_after=1)
+        cp = self.h.run_waiter(
+            "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "5"
+        )
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_ready_working_then_lookup_failure_is_error_not_ready(self):
+        """The status-loop variant: initial status `working` enters the status
+        loop, then a subsequent `herdr pane get` fails. That in-loop lookup
+        failure must fail the --ready check (rc 1). `fail_get_after=1` = the
+        initial working read succeeds, the next in-loop read fails."""
+        self.h.set_pane("p1", "working", "running\n", name="busy", fail_get_after=1)
+        cp = self.h.run_waiter(
+            "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "5"
+        )
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
 
     def test_no_marker_legacy_fallback_uses_saw_working(self):
         """Without a completion marker arranged, a genuine working->idle

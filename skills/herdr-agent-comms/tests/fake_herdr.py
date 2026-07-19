@@ -90,6 +90,16 @@ def cmd_pane_get(args):
         # non-zero exit, so a preflight must reject rather than fall open.
         print(json.dumps({"error": "simulated pane get failure"}), file=sys.stderr)
         return 1
+    # Counter-based fault: succeed the first `fail_get_after` calls, then fail
+    # every subsequent one. Deterministic "valid status, THEN lookup failure"
+    # with no timing race. The counter is persisted in the state file.
+    remaining = p.get("fail_get_after")
+    if remaining is not None:
+        if remaining <= 0:
+            print(json.dumps({"error": "simulated pane get failure (after N)"}), file=sys.stderr)
+            return 1
+        p["fail_get_after"] = remaining - 1
+        save_state(state)
     if p.get("malformed_get"):
         # Simulate a 0-exit but unparseable/unexpected-shape response.
         print("not json at all {[")

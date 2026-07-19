@@ -120,6 +120,16 @@ def agent_status(pane_id: str) -> str:
     return pane.get("agent_status") or "unknown"
 
 
+def _unverifiable(st: str, args) -> bool:
+    """True when a status result is UNVERIFIABLE and that must fail a readiness
+    check — i.e. the lookup failed AND we're doing a status-based `--ready`
+    wait. This is checked after EVERY `agent_status` call (not just the first)
+    so a valid status followed by a later lookup failure cannot slip through a
+    loop and return a false ready. A valid "unknown" is verifiable and never
+    trips this; non-ready waits and --no-prefer-status are unaffected."""
+    return args.ready and args.prefer_status and st == LOOKUP_FAILED
+
+
 def extract_pane_text(out: str) -> str:
     """Normalize either raw text or `herdr pane read` JSON to transcript text."""
     try:
@@ -254,10 +264,8 @@ def main() -> int:
     saw_working = False  # authoritative working transition
 
     st = agent_status(pane_id)
-    # A --ready check must NOT report ready when we can't even verify status:
-    # a persistent lookup failure on a blocked pane would otherwise slip
-    # through the content-stability fallback and return rc 0. Fail closed.
-    if args.ready and args.prefer_status and st == LOOKUP_FAILED:
+    # Fail closed on an unverifiable status for a --ready wait (see _unverifiable).
+    if _unverifiable(st, args):
         print(f"Error: cannot verify readiness of {pane_id} (status lookup failed)", file=sys.stderr)
         return 1
     if st == "blocked":
@@ -277,6 +285,9 @@ def main() -> int:
     if args.prefer_status and st not in ("unknown", LOOKUP_FAILED):
         while time.time() < deadline:
             st = agent_status(pane_id)
+            if _unverifiable(st, args):
+                print(f"Error: readiness of {pane_id} became unverifiable (status lookup failed)", file=sys.stderr)
+                return 1
             if st == "blocked":
                 if not args.no_print:
                     print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
@@ -340,8 +351,12 @@ def main() -> int:
                     saw_work = True
                     saw_working = True
                     continue
-                # Also check blocked while waiting to start
-                if agent_status(pane_id) == "blocked":
+                # Also check blocked while waiting to start.
+                st = agent_status(pane_id)
+                if _unverifiable(st, args):
+                    print(f"Error: readiness of {pane_id} became unverifiable (status lookup failed)", file=sys.stderr)
+                    return 1
+                if st == "blocked":
                     if not args.no_print:
                         print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
                     return 3
@@ -358,6 +373,13 @@ def main() -> int:
     while time.time() < deadline:
         time.sleep(args.interval)
         st = agent_status(pane_id)
+        # A --ready wait that reaches here started from a valid "unknown"; if a
+        # LATER lookup fails we can no longer verify readiness, so fail closed
+        # rather than let content stability report a false ready (the round-9
+        # repro: valid unknown, then lookup failure).
+        if _unverifiable(st, args):
+            print(f"Error: readiness of {pane_id} became unverifiable (status lookup failed)", file=sys.stderr)
+            return 1
         if st == "blocked":
             if not args.no_print:
                 print_delta(baseline, last, args.full)
