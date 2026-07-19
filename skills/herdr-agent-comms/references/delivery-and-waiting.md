@@ -24,10 +24,16 @@ After `pane run` / send:
 2. If still `idle`/`done` with no new transcript lines → likely not submitted → lone `enter`, then re-check.
 3. If `blocked` → dialog ate focus; do not treat as delivered task.
 
-`$sd` below is the skill's `scripts/` dir (resolve it as SKILL.md Phase 4/5 do: probe repo-local then `.agents/`, `.claude/`, `$HOME`).
+`$here` below is the skill's `scripts/` dir, resolved executably (repo-local first, then `.agents/`, `.claude/`, `$HOME`; fail fast if none resolve — matching SKILL.md Phase 4/5).
 
 ```bash
-# $sd = the skill's scripts/ dir.
+here=""
+for cand in "skills/herdr-agent-comms/scripts" ".agents/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+  [ -f "$cand/preflight_send.py" ] && { here="$cand"; break; }
+done
+[ -n "$here" ] || { echo "Error: preflight_send.py not found in any known install location" >&2; exit 1; }
 baseline="$(mktemp)"
 herdr pane read "$pane" --source recent-unwrapped --lines 80 >"$baseline" \
   || { echo "Error: baseline read failed for $pane" >&2; exit 1; }
@@ -42,7 +48,7 @@ After fully finishing, concatenate and print these parts without spaces: HERDR_D
 # sent into. Refuse to type into a working (rc 2), blocked (rc 3), or
 # unverifiable/off-enum (rc 4) pane; only idle/done/unknown (rc 0) is safe —
 # skipping it let a task land in a blocked trust dialog and report success.
-python3 "$sd/preflight_send.py" "$pane" >/dev/null \
+python3 "$here/preflight_send.py" "$pane" >/dev/null \
   || { echo "Error: $pane not safe to send to (preflight failed) — see stderr" >&2; rm -f "$baseline"; exit 1; }
 herdr pane run "$pane" "$task" || { echo "Error: send failed for $pane" >&2; rm -f "$baseline"; exit 1; }
 if herdr wait agent-status "$pane" --status working --timeout 15000; then
@@ -60,7 +66,7 @@ else
     # Re-run the preflight before the recovery Enter: the send may have flipped
     # the pane into a `blocked` dialog, and a bare Enter would answer THAT
     # dialog, not deliver the task. Never send the Enter blind.
-    python3 "$sd/preflight_send.py" "$pane" >/dev/null \
+    python3 "$here/preflight_send.py" "$pane" >/dev/null \
       || { echo "Error: $pane not safe for recovery Enter (blocked/working/unverifiable) — see stderr" >&2; rm -f "$after"; exit 1; }
     # Guard the keystroke, then PROPAGATE a failed re-wait. `|| echo NOT-DELIVERED`
     # alone exits 0 — a genuine non-delivery would be reported as success.
@@ -90,16 +96,15 @@ Pick **exactly one** of the two waiters below — they are mutually exclusive, n
 **Preferred — the helper** (post-send semantics; the pre-send baseline closes the fast-completion race):
 
 ```bash
-# $here = scripts/ dir; probe install locations, don't derive from $0/BASH_SOURCE.
+# Resolve $here = scripts/ dir executably (don't derive from $0/BASH_SOURCE).
 # Repo-local copies win over global installs; fail fast if none resolve:
-#   for cand in "skills/herdr-agent-comms/scripts" \
-#               ".agents/skills/herdr-agent-comms/scripts" \
-#               ".claude/skills/herdr-agent-comms/scripts" \
-#               "$HOME/.claude/skills/herdr-agent-comms/scripts" \
-#               "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
-#     [ -f "$cand/wait_for_idle.py" ] && here="$cand" && break
-#   done
-#   [ -n "$here" ] || { echo "Error: wait_for_idle.py not found" >&2; exit 1; }
+here=""
+for cand in "skills/herdr-agent-comms/scripts" ".agents/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+  [ -f "$cand/wait_for_idle.py" ] && { here="$cand"; break; }
+done
+[ -n "$here" ] || { echo "Error: wait_for_idle.py not found in any known install location" >&2; exit 1; }
 python3 "$here/wait_for_idle.py" "$pane" --timeout 180 --lines 80 \
   --baseline-file "$baseline" --completion-marker "$completion_marker"
 rc=$?               # capture BEFORE cleanup — `rm` would clobber $?
@@ -195,6 +200,14 @@ Capture every baseline first, then send all, then wait concurrently. This order 
 **Precondition:** `$panes` here must already be the deduped, **preflighted** target set — every entry passed the fail-closed working/blocked/unverifiable check (as `scripts/broadcast.sh` Phase 1b and the manual fleet recipe in `references/herdr-recipes.md` build it). Don't `pane run` a raw target list; a working/blocked/off-enum pane would be sent into blind. The first loop below **rechecks each target's status immediately before its dispatch** and skips any that became working/blocked/unverifiable in the baseline→send window — matching `scripts/broadcast.sh`. Still prefer `scripts/broadcast.sh` for real use; these loops are illustrative.
 
 ```bash
+# Resolve $here = scripts/ dir executably (repo-local first; fail fast).
+here=""
+for cand in "skills/herdr-agent-comms/scripts" ".agents/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+  [ -f "$cand/wait_for_idle.py" ] && { here="$cand"; break; }
+done
+[ -n "$here" ] || { echo "Error: wait_for_idle.py not found in any known install location" >&2; exit 1; }
 # Fail-closed, enum-validated status probe (returns non-zero on lookup/parse
 # failure or an off-enum value) — the same check broadcast.sh runs.
 pane_status() { local out

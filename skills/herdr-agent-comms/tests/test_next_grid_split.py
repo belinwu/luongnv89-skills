@@ -112,6 +112,73 @@ class PlanNextSplitTests(unittest.TestCase):
         self.assertEqual(new_count, 2)
 
 
+class PaneIdValidationTests(unittest.TestCase):
+    """Round 15 finding #3: a malformed pane_id on the rightmost pane must be a
+    HARD error, not a silent drop that retargets the split to another pane."""
+
+    def test_rightmost_null_id_raises_not_mistarget(self):
+        # Without the fix, _ordered_columns drops the null-id rightmost pane and
+        # plan_next_split returns ("a", 3) — splitting the WRONG column.
+        with self.assertRaises(SystemExit):
+            plan_next_split(
+                [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+                 {"pane_id": None, "rect": {"x": 50, "width": 50}}],
+                None,
+            )
+
+    def test_non_string_id_raises(self):
+        with self.assertRaises(SystemExit):
+            plan_next_split(
+                [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+                 {"pane_id": 123, "rect": {"x": 50, "width": 50}}],
+                None,
+            )
+
+    def test_empty_string_id_raises(self):
+        with self.assertRaises(SystemExit):
+            plan_next_split(
+                [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+                 {"pane_id": "", "rect": {"x": 50, "width": 50}}],
+                None,
+            )
+
+    def test_duplicate_ids_raise(self):
+        with self.assertRaises(SystemExit):
+            plan_next_split(
+                [{"pane_id": "dup", "rect": {"x": 0, "width": 50}},
+                 {"pane_id": "dup", "rect": {"x": 50, "width": 50}}],
+                None,
+            )
+
+    def test_missing_id_key_raises(self):
+        with self.assertRaises(SystemExit):
+            plan_next_split(
+                [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+                 {"rect": {"x": 50, "width": 50}}],
+                None,
+            )
+
+    def test_validate_single_row_rejects_malformed_id(self):
+        with self.assertRaises(SystemExit):
+            validate_single_row({"layout": {
+                "area": {"x": 0, "y": 0, "width": 100, "height": 10},
+                "panes": [
+                    {"pane_id": "a", "rect": {"x": 0, "y": 0, "width": 50, "height": 10}},
+                    {"pane_id": None, "rect": {"x": 50, "y": 0, "width": 50, "height": 10}},
+                ],
+            }})
+
+    def test_all_valid_unique_ids_still_plan(self):
+        # Control: valid unique ids plan normally (fix doesn't over-reach).
+        rightmost, new_count = plan_next_split(
+            [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+             {"pane_id": "b", "rect": {"x": 50, "width": 50}}],
+            None,
+        )
+        self.assertEqual(rightmost, "b")
+        self.assertEqual(new_count, 3)
+
+
 class MalformedLayoutJsonTests(unittest.TestCase):
     """Round 14 note: malformed-but-valid JSON must yield a clean SystemExit
     validation error, NOT an uncaught AttributeError traceback."""

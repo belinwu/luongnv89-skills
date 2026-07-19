@@ -242,7 +242,17 @@ herdr pane run "$pane" "bash -lc 'tail -f /tmp/app.log'" || { echo "Error: launc
 
 ## Sending multi-line or code-heavy messages
 
-`herdr pane run <pane> <command>` takes one shell-quoted string. Nested quotes and newlines break easily. `$sd` below is the skill's `scripts/` dir. Each pattern is **self-contained**: it runs the fail-closed preflight (`scripts/preflight_send.py`) immediately before its guarded submission, and **guards every text-delivery step** so a failed `send-text`/`agent send` can never fall through to a bare Enter (which would deliver an empty line into whatever is on screen).
+`herdr pane run <pane> <command>` takes one shell-quoted string. Nested quotes and newlines break easily. Each pattern is **self-contained**: it resolves `$here` (the skill's `scripts/` dir) executably, **preflights before the first pane mutation** (so a working/blocked pane is never touched), guards every text-delivery step, then **preflights AGAIN immediately before the guarded Enter** (the pane could have flipped `blocked` in between). Resolve `$here` once first:
+
+```bash
+here=""
+for cand in "skills/herdr-agent-comms/scripts" ".agents/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+  [ -f "$cand/preflight_send.py" ] && { here="$cand"; break; }
+done
+[ -n "$here" ] || { echo "Error: preflight_send.py not found in any known install location" >&2; exit 1; }
+```
 
 **Pattern A — short instruction that reads a file:**
 
@@ -257,8 +267,8 @@ Return only:
 1. bugs
 2. missing tests
 EOF
-# Preflight immediately before the send.
-python3 "$sd/preflight_send.py" "$pane_id" >/dev/null \
+# One atomic mutation (`pane run` submits + Enter): a single preflight before it.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
   || { echo "Error: $pane_id not safe to send to (preflight failed) — see stderr" >&2; rm -f "$task_file"; exit 1; }
 herdr pane run "$pane_id" "Read $task_file and follow its instructions. Delete the file when done." \
   || { echo "send failed for $pane_id" >&2; rm -f "$task_file"; exit 1; }
@@ -267,11 +277,16 @@ herdr pane run "$pane_id" "Read $task_file and follow its instructions. Delete t
 **Pattern B — `send-text` then Enter** (when you must avoid shell expansion inside `pane run`):
 
 ```bash
-# Guard send-text: if the text never landed, DO NOT submit a bare Enter.
+# Preflight BEFORE the first mutation — send-text alters the pane, so a
+# working/blocked pane must be rejected before any text is injected.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
+# Guard send-text: if the text never landed, DO NOT fall through to the Enter.
 herdr pane send-text "$pane_id" "line one" \
   || { echo "send-text failed for $pane_id — not submitting Enter" >&2; exit 1; }
-# Preflight immediately before the Enter that submits it.
-python3 "$sd/preflight_send.py" "$pane_id" >/dev/null \
+# Preflight AGAIN immediately before the Enter (the pane may have flipped
+# `blocked` since the text landed — a bare Enter would answer that dialog).
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
   || { echo "Error: $pane_id not safe to submit (preflight failed) — see stderr" >&2; exit 1; }
 herdr pane send-keys "$pane_id" enter \
   || { echo "Enter failed for $pane_id" >&2; exit 1; }
@@ -280,11 +295,14 @@ herdr pane send-keys "$pane_id" enter \
 **Pattern C — agent name:**
 
 ```bash
+# Preflight BEFORE the first mutation — `agent send` injects text into the pane.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
 # Guard agent send: a failed send must not fall through to a bare Enter.
 herdr agent send reviewer "summarize src/" \
   || { echo "agent send failed for reviewer — not submitting Enter" >&2; exit 1; }
-# Preflight immediately before the submitting Enter.
-python3 "$sd/preflight_send.py" "$pane_id" >/dev/null \
+# Preflight AGAIN immediately before the submitting Enter.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
   || { echo "Error: $pane_id not safe to submit (preflight failed) — see stderr" >&2; exit 1; }
 herdr pane send-keys "$pane_id" enter \
   || { echo "Enter failed for $pane_id" >&2; exit 1; }

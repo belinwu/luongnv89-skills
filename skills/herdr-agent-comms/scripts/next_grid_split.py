@@ -169,9 +169,13 @@ def validate_single_row(data: dict, tolerance: int = 1) -> None:
         raise SystemExit(f"layout 'area' rect missing x/y/width/height: {e}") from e
 
     panes = panes_from_layout(data)
+    # Reject missing / non-string / empty / duplicate pane ids up front — a
+    # malformed id here would otherwise flow into the split planner and mis-
+    # target a column (see _validate_pane_ids).
+    _validate_pane_ids(panes)
     rects: list[tuple[float, float, float, float, str]] = []
     for pane in panes:
-        pid = pane.get("pane_id")
+        pid = pane["pane_id"]  # validated: unique non-empty str
         rect = pane.get("rect")
         if not isinstance(rect, dict):
             raise SystemExit(f"pane {pid!r} has no rect; cannot validate layout shape")
@@ -210,29 +214,48 @@ def validate_single_row(data: dict, tolerance: int = 1) -> None:
         )
 
 
+def _validate_pane_ids(panes: list[dict]) -> None:
+    """Require every pane to carry a unique, non-empty STRING pane_id.
+
+    Runs as a first pass over the FULL input list, before any rect-based drop.
+    A pane with a missing / non-string / empty / duplicate id is a layout we
+    cannot safely plan against: `_ordered_columns` used to *silently drop* such
+    panes, so a malformed rightmost column would vanish and the planner would
+    split the WRONG pane. Reject up front instead of dropping. Also rejects a
+    non-object element (e.g. `panes: [null]`) rather than crashing on `.get`.
+    """
+    seen_ids: set[str] = set()
+    for i, pane in enumerate(panes):
+        if not isinstance(pane, dict):
+            raise SystemExit(f"layout pane #{i} is not an object")
+        pane_id = pane.get("pane_id")
+        if not isinstance(pane_id, str) or not pane_id:
+            raise SystemExit(f"pane #{i} has a missing / non-string / empty pane_id: {pane_id!r}")
+        if pane_id in seen_ids:
+            raise SystemExit(f"duplicate pane_id {pane_id!r} in layout")
+        seen_ids.add(pane_id)
+
+
 def _ordered_columns(panes: list[dict]) -> tuple[list[str], list[float]]:
     """Order panes by rect.x and return parallel (ids, widths) lists.
 
     Panes without a usable rect are dropped rather than guessed at — a
     missing x/width is a layout-shape error the caller should see, not
-    something to silently default to 0.
+    something to silently default to 0. (Pane ids are validated first via
+    `_validate_pane_ids`, so a missing/duplicate id is a hard error, never a
+    silent drop that could retarget the split.)
     """
+    _validate_pane_ids(panes)
     ordered: list[tuple[float, str, float]] = []
     for pane in panes:
-        if not isinstance(pane, dict):
-            # A null / non-object element (e.g. `panes: [null]`) — treat as a
-            # layout-shape error, not an uncaught AttributeError. Callers going
-            # through panes_from_layout are pre-validated; this guards direct
-            # callers (e.g. plan_next_split) too.
-            raise SystemExit("layout contains a non-object pane entry")
-        pane_id = pane.get("pane_id")
+        pane_id = pane["pane_id"]  # validated above: a non-empty unique str
         rect = pane.get("rect") or {}
         try:
             x = float(rect.get("x", 0))
             width = float(rect.get("width", 0))
         except (TypeError, ValueError):
             continue
-        if not pane_id or width <= 0:
+        if width <= 0:
             continue
         ordered.append((x, pane_id, width))
     if not ordered:
