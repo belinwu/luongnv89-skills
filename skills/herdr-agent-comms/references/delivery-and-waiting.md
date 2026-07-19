@@ -37,16 +37,19 @@ herdr pane run "$pane" "$task" || { echo "Error: send failed for $pane" >&2; exi
 if herdr wait agent-status "$pane" --status working --timeout 15000; then
   echo delivered
 else
-  # Capture the read EXPLICITLY and check it — a failed `herdr pane read`
-  # inside `<(...)` would differ from baseline and be misread as activity.
-  after="$(herdr pane read "$pane" --source recent-unwrapped --lines 80)" \
-    || { echo "Error: post-send read failed for $pane" >&2; exit 1; }
-  if ! printf '%s' "$after" | cmp -s "$baseline" -; then
+  # Read post-send into a SECOND FILE and compare file-to-file. `$(...)` capture
+  # strips trailing newlines the baseline file keeps, so identical transcripts
+  # would falsely compare as "activity". A failed read is an error, not delivery.
+  after="$(mktemp)"
+  herdr pane read "$pane" --source recent-unwrapped --lines 80 >"$after" \
+    || { echo "Error: post-send read failed for $pane" >&2; rm -f "$after"; exit 1; }
+  if ! cmp -s "$baseline" "$after"; then
     echo delivered-transcript-activity
   else
     herdr pane send-keys "$pane" enter
     herdr wait agent-status "$pane" --status working --timeout 10000 || echo NOT-DELIVERED
   fi
+  rm -f "$after"
 fi
 ```
 
@@ -76,14 +79,16 @@ Orchestrator pattern — **accept either terminal state**; do not spend the whol
 #   [ -n "$here" ] || { echo "Error: wait_for_idle.py not found" >&2; exit 1; }
 python3 "$here/wait_for_idle.py" "$pane" --timeout 180 --lines 80 \
   --baseline-file "$baseline" --completion-marker "$completion_marker"
-rc=$?
+rc=$?               # capture BEFORE cleanup — `rm` would clobber $?
 rm -f "$baseline"
-# Act on the waiter's exit — 0 done/idle, 2 timeout, 3 blocked (needs human).
+# Act on the waiter's exit and PROPAGATE it — 0 done/idle, 1 error, 2 timeout,
+# 3 blocked. Any non-zero means no delivered reply; exit non-zero, don't fall
+# through to the manual poll as if the wait had succeeded.
 case "$rc" in
   0) : ;;
-  3) echo "$pane: BLOCKED — a human must answer a dialog" >&2 ;;
-  2) echo "$pane: TIMEOUT before completion" >&2 ;;
-  *) echo "$pane: waiter failed (rc $rc)" >&2 ;;
+  3) echo "$pane: BLOCKED — a human must answer a dialog" >&2; exit 3 ;;
+  2) echo "$pane: TIMEOUT before completion" >&2; exit 2 ;;
+  *) echo "$pane: waiter failed (rc $rc)" >&2; exit "$rc" ;;
 esac
 
 # Manual alternative: poll pane get for idle|done|blocked. FAIL-CLOSED status

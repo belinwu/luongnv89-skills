@@ -257,7 +257,8 @@ Return only:
 1. bugs
 2. missing tests
 EOF
-herdr pane run "$pane_id" "Read $task_file and follow its instructions. Delete the file when done."
+herdr pane run "$pane_id" "Read $task_file and follow its instructions. Delete the file when done." \
+  || { echo "send failed for $pane_id" >&2; exit 1; }
 ```
 
 **Pattern B — `send-text` then Enter** (when you must avoid shell expansion inside `pane run`):

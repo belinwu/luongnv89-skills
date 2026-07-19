@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.11.0
+  version: 1.12.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -255,10 +255,9 @@ completion_marker="HERDR_DONE_$marker_suffix"
 task="summarize the changes in src/
 
 After fully finishing, concatenate and print these two parts without spaces: HERDR_DONE_ and $marker_suffix"
-herdr pane run "$pane_id" "$task"
+herdr pane run "$pane_id" "$task" || { echo "Error: send failed for $pane_id" >&2; exit 1; }
 
-# by name (literal text only — add Enter yourself if needed)
-# herdr agent send reviewer "summarize the changes in src/"
+# by name (literal, no Enter): herdr agent send reviewer "…"; then
 # herdr pane send-keys "$pane_id" enter
 ```
 
@@ -270,16 +269,18 @@ herdr pane run "$pane_id" "$task"
 if herdr wait agent-status "$pane_id" --status working --timeout 15000; then
   echo delivered
 else
-  # Capture the post-send read EXPLICITLY and check it succeeded — a failed
-  # `herdr pane read` in a `<(...)` would look "different from baseline" and
-  # be misreported as activity. A failed read is an error, not delivery.
-  after="$(herdr pane read "$pane_id" --source recent-unwrapped --lines 80)" \
-    || { echo "Error: post-send pane read failed for $pane_id" >&2; exit 1; }
-  if ! printf '%s' "$after" | cmp -s "$baseline_file" -; then
+  # Read post-send into a SECOND FILE and compare file-to-file. NOT
+  # `after="$(...)"` + cmp: `$(...)` strips trailing newlines the baseline
+  # keeps, so identical transcripts falsely compare as activity.
+  after_file="$(mktemp)"
+  herdr pane read "$pane_id" --source recent-unwrapped --lines 80 >"$after_file" \
+    || { echo "Error: post-send pane read failed for $pane_id" >&2; rm -f "$after_file"; exit 1; }
+  if ! cmp -s "$baseline_file" "$after_file"; then
     echo delivered-transcript-activity
   else
     echo NOT-DELIVERED
   fi
+  rm -f "$after_file"
 fi
 ```
 
@@ -307,9 +308,9 @@ fi
 [ -n "${here:-}" ] || { echo "Error: wait_for_idle.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 python3 "$here/wait_for_idle.py" "$pane_id" --timeout 180 --lines 80 \
   --baseline-file "$baseline_file" --completion-marker "$completion_marker"
-rc=$?
-rm -f "$baseline_file"
-# rc: 0 settled, 2 timeout, 3 blocked
+rc=$?; rm -f "$baseline_file"   # capture rc BEFORE cleanup ($? = rm's otherwise)
+# rc: 0 settled, 1 error, 2 timeout, 3 blocked. Propagate non-zero — not a reply.
+[ "$rc" -eq 0 ] || { echo "Error: wait for $pane_id did not complete (rc $rc)" >&2; exit "$rc"; }
 ```
 
 Manual fallback after delivery is verified:
@@ -365,7 +366,7 @@ Optional helper when status stays `unknown` (no integration / undetected CLI): `
 
 ```bash
 herdr agent focus reviewer          # jump UI to that agent
-herdr pane run "$pane_id" "Also check the failing test."
+herdr pane run "$pane_id" "Also check the failing test." || { echo "send failed for $pane_id" >&2; exit 1; }
 # then Phase 5 again
 ```
 

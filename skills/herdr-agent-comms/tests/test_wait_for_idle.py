@@ -44,9 +44,11 @@ class FakeHerdrHarness:
         with open(self.state_path, encoding="utf-8") as f:
             return json.load(f)
 
-    def set_pane(self, pane_id, status, text, name=None):
+    def set_pane(self, pane_id, status, text, name=None, fail_get=False):
         state = self.read_state()
-        state["panes"][pane_id] = {"agent_status": status, "text": text, "name": name}
+        state["panes"][pane_id] = {
+            "agent_status": status, "text": text, "name": name, "fail_get": fail_get,
+        }
         self.write_state(state)
 
     def set_status(self, pane_id, status):
@@ -253,6 +255,46 @@ class WaitForIdleMarkerSemanticsTests(unittest.TestCase):
         self.h.set_pane("p1", "idle", "already done earlier\n")
         cp = self.h.run_waiter("p1", "--ready", "--timeout", "1")
         self.assertEqual(cp.returncode, 0)
+
+    def test_ready_with_status_lookup_failure_is_error_not_ready(self):
+        """Regression (P1 round 8): a `--ready` check must NOT report ready
+        (rc 0) when `herdr pane get` fails — a failed status lookup is
+        unverifiable, not a valid `unknown`. Previously this fell through to
+        content-stability and returned 0. Now it errors (rc 1)."""
+        # Pane resolves (via `agent get`) but every `pane get` status lookup
+        # fails, so status is unverifiable throughout.
+        self.h.set_pane("p1", "idle", "boot\n", name="flaky", fail_get=True)
+        cp = self.h.run_waiter("p1", "--ready", "--timeout", "2")
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_ready_blocked_pane_with_lookup_failure_is_not_ready(self):
+        """The reported repro: a genuinely `blocked` pane whose status lookup
+        also persistently fails must NOT be reproduced as ready rc 0. Since the
+        lookup is unverifiable, `--ready` errors (rc 1) rather than guessing
+        ready — never silently proceeding as if a dialog weren't there.
+
+        Small --interval + short quiet-cycles so that, under the OLD fail-open
+        behaviour, the static dialog text WOULD stabilize and return a false
+        ready rc 0 — that is exactly what the fix must prevent. rc 1 (fixed)
+        vs rc 0 (buggy) is the discriminating outcome."""
+        self.h.set_pane("p1", "blocked", "Trust this workspace? [y/n]\n",
+                        name="gated", fail_get=True)
+        cp = self.h.run_waiter(
+            "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "5"
+        )
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_valid_unknown_status_still_uses_content_stability(self):
+        """A validly-absent status ("unknown", e.g. a non-integrated CLI) must
+        NOT be treated as a lookup failure — it still uses the content-stability
+        path and can settle ready. This guards against over-correcting #1 into
+        breaking integration-less agents. (Small --interval + enough timeout so
+        the quiet-cycle stability check can actually complete.)"""
+        self.h.set_pane("p1", "unknown", "some stable output\n")
+        cp = self.h.run_waiter(
+            "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "5"
+        )
+        self.assertEqual(cp.returncode, 0, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
 
     def test_no_marker_legacy_fallback_uses_saw_working(self):
         """Without a completion marker arranged, a genuine working->idle

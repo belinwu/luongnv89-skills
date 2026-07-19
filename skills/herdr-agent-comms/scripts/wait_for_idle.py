@@ -98,14 +98,26 @@ def resolve_pane(target: str) -> str:
     raise SystemExit(f"target not found: {target!r}")
 
 
-def agent_status(pane_id: str) -> str | None:
+# Distinct sentinel for a FAILED/unparseable `herdr pane get`, kept separate
+# from a valid-but-absent status ("unknown"). Conflating the two is a
+# fail-open bug: a persistent lookup failure on a `blocked` pane would look
+# like "no status → fall back to content-stability → report ready". Callers
+# must treat LOOKUP_FAILED as unverifiable (an error under --ready), while a
+# genuine "unknown" (non-integrated CLI) still uses the content-stability path.
+LOOKUP_FAILED = "\x00lookup-failed"
+
+
+def agent_status(pane_id: str) -> str:
+    """Return the pane's agent status, "unknown" if validly absent, or
+    LOOKUP_FAILED if the `herdr pane get` call failed / didn't parse."""
     cp = run(["herdr", "pane", "get", pane_id])
     if cp.returncode != 0:
-        return None
+        return LOOKUP_FAILED
     try:
-        return json.loads(cp.stdout)["result"]["pane"].get("agent_status")
+        pane = json.loads(cp.stdout)["result"]["pane"]
     except (json.JSONDecodeError, KeyError):
-        return None
+        return LOOKUP_FAILED
+    return pane.get("agent_status") or "unknown"
 
 
 def extract_pane_text(out: str) -> str:
@@ -242,6 +254,12 @@ def main() -> int:
     saw_working = False  # authoritative working transition
 
     st = agent_status(pane_id)
+    # A --ready check must NOT report ready when we can't even verify status:
+    # a persistent lookup failure on a blocked pane would otherwise slip
+    # through the content-stability fallback and return rc 0. Fail closed.
+    if args.ready and args.prefer_status and st == LOOKUP_FAILED:
+        print(f"Error: cannot verify readiness of {pane_id} (status lookup failed)", file=sys.stderr)
+        return 1
     if st == "blocked":
         if not args.no_print:
             print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
@@ -252,7 +270,11 @@ def main() -> int:
             print_delta(baseline, baseline, args.full)
         return 0
 
-    if args.prefer_status and st not in (None, "unknown"):
+    # `unknown` (validly absent status) → content-stability fallback below.
+    # LOOKUP_FAILED under --ready was already rejected; for a non-ready wait it
+    # also falls through to content-stability (which reads the transcript and
+    # will itself error if the pane is gone).
+    if args.prefer_status and st not in ("unknown", LOOKUP_FAILED):
         while time.time() < deadline:
             st = agent_status(pane_id)
             if st == "blocked":
