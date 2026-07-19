@@ -10,7 +10,7 @@
     {
       "id": 2,
       "prompt": "Spin up two Herdr agents for this project named 'tests' and 'docs'. Use pi with thinking low for both. Split them from my current pane so I can see root + both agents in one tab.",
-      "expected_output": "Checks herdr status, resolves root pane (HERDR_PANE_ID or equivalent), builds a same-tab grid including root by splitting the largest pane twice with --no-focus (not new tabs, not a separate fleet tab, not repeated slivers from one pane), launches pi --thinking low in each sub-pane, renames agents, waits until idle/ready, keeps root agent pane. No server stop.",
+      "expected_output": "Checks herdr status, resolves root pane (HERDR_PANE_ID or equivalent), builds a same-tab grid including root by splitting the rightmost column twice with --no-focus and resizing every column to equal width each time (not new tabs, not a separate fleet tab, not unequal-width columns), launches pi --thinking low in each sub-pane, renames agents, waits until idle/ready, keeps root agent pane. No server stop.",
       "files": []
     },
     {
@@ -22,7 +22,7 @@
     {
       "id": 4,
       "prompt": "Launch three Herdr agents (reviewer, tests, docs) for this repo with different tasks in parallel and keep them visible in one view so I can jump into any pane to steer.",
-      "expected_output": "Resolves root pane/tab, builds a same-tab grid including root by largest-pane splits for three sub-agents (no-focus), submits distinct tasks, explains human can herdr agent focus a pane to steer, does not create per-agent tabs, does not nest tmux.",
+      "expected_output": "Resolves root pane/tab, builds a same-tab grid including root by rightmost-column splits + equal-width resize for three sub-agents (no-focus), submits distinct tasks, explains human can herdr agent focus a pane to steer, does not create per-agent tabs, does not nest tmux.",
       "files": []
     },
     {

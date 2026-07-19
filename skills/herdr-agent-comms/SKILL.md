@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.5.0
+  version: 1.6.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -18,24 +18,23 @@ Mental model (Herdr concepts, not tmux):
 | Concept | Role in this skill |
 |---|---|
 | **Root agent** | Orchestrator pane (usually the caller: `$HERDR_PANE_ID`) — never replaced by a sub-agent |
-| **Root tab** | The root agent's tab — **single grid** holding root + every sub-agent pane |
-| **Sub-agent pane** | Created by splitting the current largest pane in the root tab (often root first) |
+| **Root tab** | The root agent's tab — **single row of equal-width columns** holding root + every sub-agent pane |
+| **Sub-agent pane** | Created by splitting the rightmost column `right`, then resizing every column (including root) down to the new equal share |
 | **Agent name** | Stable handle for send/wait/read (`reviewer`, `tests`, …) |
 
-Default layout after spawning three sub-agents (balanced grid including root; **vertical panel first**):
+Default layout after spawning three sub-agents (**equal-width columns, root included**):
 
 ```
 Tab (root's tab)
-┌─────────────┬─────────────┐
-│ root (you)  │ reviewer    │
-├─────────────┼─────────────┤
-│ tests       │ docs        │
-└─────────────┴─────────────┘
+┌──────────┬──────────┬──────────┬──────────┐
+│ root(you)│ reviewer │ tests    │ docs     │
+└──────────┴──────────┴──────────┴──────────┘
 ```
-(Exact tiles depend on aspect ratios and live geometry — `next_grid_split.py` always
-picks the largest pane, so later splits may target root or a sub-agent pane. The first
-split always prefers `down`, so root starts on top; the largest-pane rule tends to grid
-root and its workers into roughly equal tiles rather than one full column.)
+(All columns — root and every sub-agent — are always the same width. Adding a
+column means splitting the current rightmost pane `right`, then resizing every
+existing column down to `1/N` where N is the new total column count.
+`next_grid_split.py` computes this plan; see Phase 2a and "Equal-width columns"
+below for the caveat on `herdr pane resize` semantics.)
 
 You orchestrate with the `herdr` CLI. Prefer agent-status waits over scrollback polling. Relay each agent's answer, not its whole screen.
 
@@ -70,7 +69,7 @@ Six phases, in order: ensure server + resolve root, split sub-agents from root, 
 
 1. **Confirm before destructive actions.** Closing panes/tabs/workspaces or `herdr server stop` can lose agent work — never without explicit user go-ahead. Reading panes is always safe. **Never close the root pane** unless the user explicitly asks to kill the orchestrator.
 2. **Parse IDs from JSON.** Workspace/tab/pane IDs are opaque (`w26`, `w26:t2`, `w26:p4`). Never invent them from sidebar order.
-3. **Grid layout in the root tab.** Default spawn builds a **tiled grid that includes the root agent**. Split the **largest current pane** (not always the same pane), alternating `right`/`down` by geometry so root and workers stay balanced. Do **not** create a separate fleet tab and do **not** put the first sub-agent on a new tab's root pane. New tabs only when the user explicitly asks for isolation.
+3. **Equal-width column grid in the root tab.** Default spawn builds a **row of equal-width columns that includes the root agent**. Every split is `right` on the current rightmost column, followed by resizing every column (including root) down to the new `1/N` share — never leave root or a worker wider than the others. Do **not** create a separate fleet tab and do **not** put the first sub-agent on a new tab's root pane. New tabs only when the user explicitly asks for isolation.
 4. **Prefer `--no-focus` while spawning** so focus stays on the root agent. Use `herdr agent focus <name>` when the user wants to type into a sub-agent.
 5. **Wait on agent status, don't race.** After send, wait for `working` then `idle`/`done` (Phase 4). Don't send a follow-up while status is `working`.
 6. **`pane run` submits text + Enter.** Prefer it over separate `send-text`/`send-keys` for prompts. `agent send` is literal text only (no Enter) — use when you must type without submitting.
@@ -112,9 +111,9 @@ Optional: `herdr integration install pi|claude|codex|opencode|hermes` for better
 
 Every sub-agent joins the **same tab as the root agent** as part of a **tiled grid**. The root agent is **not** moved, renamed into a worker, or replaced.
 
-### 2a — Split the largest pane → launch sub-agent
+### 2a — Split the rightmost column, resize all to equal width → launch sub-agent
 
-Do **not** always split `$root_pane`. Always pick the current largest cell so root and workers stay roughly equal size:
+Every column — root included — must end up the **same width**. Do **not** just split and move on: after the split, resize every existing column down to the new `1/N` share:
 
 ```bash
 project_dir=/path/to/project   # usually root pane cwd
@@ -142,49 +141,68 @@ agent_cmd='pi --thinking medium'
 # free name if taken
 herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
 
-# Choose largest pane + direction from live geometry (includes root).
-read -r split_from dir < <(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
-split_json="$(herdr pane split "$split_from" --direction "$dir" --cwd "$project_dir" --no-focus)"
+# Plan: line 1 is "split <rightmost_pane> right --ratio <share>", the rest
+# are "resize <pane_id> <share>" for every pre-existing column (root
+# included). See "Equal-width columns" below for the --ratio/--amount
+# semantics caveat — confirm against your herdr version if in doubt.
+plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
+read -r _ split_from _dir _ratio_flag ratio < <(head -1 <<<"$plan")
+split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
 # JSON shape: result.pane.pane_id (verify once with your herdr version if needed)
 sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r.get("root_pane") or r)["pane_id"])')"
+
+# Resize every pre-existing column (from the plan's remaining lines) to the
+# same share so the new pane doesn't leave the others too wide.
+tail -n +2 <<<"$plan" | while read -r _ pane_id share; do
+  [ "$pane_id" = "$sub_pane" ] && continue   # the new pane is already at `share` from --ratio
+  herdr pane resize --pane "$pane_id" --direction right --amount "$share" >/dev/null || true
+done
 
 herdr pane rename "$sub_pane" "$name" >/dev/null
 herdr agent rename "$sub_pane" "$name" >/dev/null
 herdr pane run "$sub_pane" "$agent_cmd" >/dev/null
 ```
 
-**Second / third sub-agent** — re-run the chooser each time (geometry changes after every split):
+**Second / third sub-agent** — re-run the planner each time (share shrinks as columns are added):
 
 ```bash
 name=tests
 herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-read -r split_from dir < <(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
-split_json="$(herdr pane split "$split_from" --direction "$dir" --cwd "$project_dir" --no-focus)"
+plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
+read -r _ split_from _dir _ratio_flag ratio < <(head -1 <<<"$plan")
+split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
 sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
+tail -n +2 <<<"$plan" | while read -r _ pane_id share; do
+  [ "$pane_id" = "$sub_pane" ] && continue
+  herdr pane resize --pane "$pane_id" --direction right --amount "$share" >/dev/null || true
+done
 herdr pane rename "$sub_pane" "$name" >/dev/null
 herdr agent rename "$sub_pane" "$name" >/dev/null
 herdr pane run "$sub_pane" 'pi --thinking low' >/dev/null
 ```
 
-**Manual fallback** when the helper is unavailable: inspect `herdr pane layout --pane "$root_pane"`, split the largest pane by `rect.width * rect.height`. If this is the **first** split (only one pane exists), use `down` unconditionally — most terminals are wider than tall, so an aspect check alone would pick `right` and contradict vertical-panel-first. For later splits, use **`down` if height ≥ width else `right`**. Stay on `root_tab`.
+**Manual fallback** when the helper is unavailable: inspect `herdr pane layout --pane "$root_pane"`, order panes left to right by `rect.x`, split the rightmost one `right`, then resize every column (the new one plus every pre-existing one) to `1 / (existing_count + 1)`. Stay on `root_tab`.
 
-**Alternative** (same tab, less balanced): `herdr agent start` into the root tab:
+**Alternative** (same tab, not equal-width without manual resize): `herdr agent start` into the root tab:
 
 ```bash
 herdr agent start "$name" --cwd "$project_dir" --workspace "$ws" --tab "$root_tab" \
   --split right --no-focus -- pi --thinking medium
 ```
 
-Prefer **`next_grid_split.py` + `pane split`** so the grid includes root and stays balanced. Avoid always splitting the same pane (creates long slivers).
+Prefer **`next_grid_split.py` + `pane split` + `pane resize`** so the grid includes root and stays equal-width. This alternative skips the resize step, so follow it with a manual `herdr pane resize` pass on every column if you use it.
 
 **Grid rules:**
 1. One tab only: root + every sub-agent.
-2. Before each split, choose the **largest** pane in that tab (tie-break: root).
-3. Direction: the **first** split is always `down` (vertical panel first, regardless of aspect — real terminals are usually wider than tall). Later splits follow the target pane's aspect: **`down` when taller or square**, `right` only when clearly wider.
-4. Always `--no-focus` so the root keeps the keyboard.
-5. Optional check: `herdr pane layout --pane "$root_pane"` should show multiple similar-sized rects, not one huge pane and thin strips.
+2. Every split targets the current **rightmost** column.
+3. Direction: always `right` — this is a single row of equal-width columns, not a 2D grid. There is no `down` case in the default layout.
+4. After every split, resize **every** column (including root) down to `1 / N` where N is the new total column count. A split alone only sizes the new pane; it does not shrink the columns already in place.
+5. Always `--no-focus` so the root keeps the keyboard.
+6. Optional check: `herdr pane layout --pane "$root_pane"` should show N rects of equal `rect.width`, not one wide pane and thin strips.
 
-**Forbidden by default:** `herdr tab create` per sub-agent; hijacking the root pane with the first worker's CLI; `herdr workspace create` just to host workers when a root pane already exists; stacking every split from only `$root_pane` after the first cell is already small.
+**Equal-width columns — verification caveat:** the exact meaning of `herdr pane split --ratio` and `herdr pane resize --amount` (fraction of remaining space vs. absolute tab fraction vs. cells) has not been confirmed against a live `herdr` server in this skill's test suite — `next_grid_split.py`'s unit tests only cover the arithmetic (pane ordering, `1/N` share), not the live resize call. Run `herdr pane layout --pane "$root_pane"` after a spawn and confirm the rects are actually equal width before trusting this at scale; adjust the `--ratio`/`--amount` interpretation above if your installed `herdr` version disagrees.
+
+**Forbidden by default:** `herdr tab create` per sub-agent; hijacking the root pane with the first worker's CLI; `herdr workspace create` just to host workers when a root pane already exists; splitting a column other than the current rightmost one (creates unequal widths the resize pass won't fix).
 
 **Optional (user asks for isolation):** tab-per-agent — see `references/herdr-recipes.md`. Not the default.
 
@@ -219,7 +237,7 @@ herdr wait agent-status "$sub_pane" --status idle --timeout 60000
 
 Detach the Herdr client with `prefix+q` (`ctrl+b` then `q`); agents keep running.
 
-**Done when:** each sub-agent has `sub_pane` + agent `name`, **same `root_tab` as the root pane**, layout is a **grid that includes the root pane** (not stacked slivers), root pane still holds the orchestrator, status is not stuck on `unknown` after boot wait, and initial tasks (if any) have been submitted.
+**Done when:** each sub-agent has `sub_pane` + agent `name`, **same `root_tab` as the root pane**, layout is a **row of equal-width columns that includes the root pane** (verified via `herdr pane layout` — not stacked slivers or one wide pane), root pane still holds the orchestrator, status is not stuck on `unknown` after boot wait, and initial tasks (if any) have been submitted.
 
 ## Phase 3: Resolve the Exact Target
 
@@ -402,11 +420,17 @@ done
 [ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 spawn_sub() {
   local name="$1" cmd="$2"
-  local split_from dir split_json pane
+  local plan split_from ratio split_json pane
   herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-  read -r split_from dir < <(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
-  split_json="$(herdr pane split "$split_from" --direction "$dir" --cwd "$project_dir" --no-focus)"
+  # Plan: line 1 "split <rightmost> right --ratio <share>", rest "resize <pane> <share>".
+  plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
+  read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
+  split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
   pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
+  tail -n +2 <<<"$plan" | while read -r _ pid share; do
+    [ "$pid" = "$pane" ] && continue
+    herdr pane resize --pane "$pid" --direction right --amount "$share" >/dev/null || true
+  done
   herdr pane rename "$pane" "$name" >/dev/null
   herdr agent rename "$pane" "$name" >/dev/null
   herdr pane run "$pane" "$cmd" >/dev/null
@@ -443,7 +467,7 @@ rm -f "$b1" "$b2"
 - **Wrong workspace** — never spawn project B agents into project A's workspace; re-resolve Phase 1.
 - **Status `unknown`** — install integration or use `scripts/wait_for_idle.py` + `pane read`.
 - **Too many splits** — more than ~4 panes in one tab gets cramped; keep the grid helper, or switch to tab-per-agent only if the user asks.
-- **Sliver layout** — you kept splitting one pane; re-run `scripts/next_grid_split.py` and split the largest cell instead.
+- **Unequal-width columns** — you split without the resize pass, or split a pane other than the current rightmost column; re-run `scripts/next_grid_split.py` and apply its full plan (split + resize every column).
 - **User wants to steer** — `herdr agent focus <name>` for a sub-agent; keep CLI follow-ups only when not fighting their keyboard.
 - **Closing the wrong pane** — only close **sub-agent** panes this skill created; never close root unless asked.
 - **Accidental new fleet tab** — if you created a tab by mistake, move work into root's tab via grid splits and close the empty tab only with confirmation.
@@ -451,7 +475,7 @@ rm -f "$b1" "$b2"
 ## Reference
 
 - `references/herdr-recipes.md` — grid layouts, multi-line sends, focus/steer, scrollback, troubleshooting.
-- `scripts/next_grid_split.py` — choose next largest pane + split direction for a balanced grid.
+- `scripts/next_grid_split.py` — plan the next split + resize-all-columns pass for an equal-width grid.
 - `references/delivery-and-waiting.md` — delivery checks, idle/done/blocked, budgets.
 - Official concepts: https://herdr.dev/docs/concepts/ · CLI: https://herdr.dev/docs/cli-reference/ · cheatsheet: https://luongnv.com/awesome-cheatsheets/cheatsheets/herdr/
 

@@ -7,11 +7,11 @@
 
 # Herdr Agent Comms
 
-> Tile **root + sub-agents** into **one grid tab** — root stays put, workers fill balanced cells, messaging via the `herdr` CLI with status-aware waits.
+> Tile **root + sub-agents** into **one grid tab** as equal-width columns — root stays put, workers stay the same size as root, messaging via the `herdr` CLI with status-aware waits.
 
 ## Highlights
 
-- **Root + sub-agents grid** — largest-pane splits keep root and workers in a usable tiled layout.
+- **Root + sub-agents grid** — every column, including root, is resized to equal width as sub-agents are added.
 - **Root never replaced** — orchestrator pane stays; only close worker panes on teardown.
 - **Fleet spawn** — agent CLI + model + thinking + optional skills, then assign tasks in parallel.
 - **Message & steer** — `pane run` / `agent send`, wait on `working` → `done`/`idle`, read transcripts.
@@ -22,7 +22,7 @@
 
 | Say this... | Skill will... |
 |---|---|
-| "Spin up 2 Herdr agents beside me: reviewer and tests" | Build a grid in the root tab, launch agents in balanced cells |
+| "Spin up 2 Herdr agents beside me: reviewer and tests" | Build a grid in the root tab, launch agents in equal-width columns |
 | "Ask the reviewer agent what it found" | Resolve target, send, wait on status, relay reply |
 | "Broadcast 'pull main' to all fleet agents" | Fan-out send + concurrent collect |
 | "Focus the tests pane so I can steer" | `herdr agent focus tests` |
@@ -31,7 +31,7 @@
 
 ```mermaid
 graph TD
-    A["Resolve root pane + tab + workspace"] --> B["next_grid_split · pane split largest"]
+    A["Resolve root pane + tab + workspace"] --> B["next_grid_split · split rightmost + resize all to equal width"]
     B --> C["Rename sub-pane · launch CLI · wait idle"]
     C --> D["Submit tasks · broadcast"]
     D --> E["Wait agent-status done|idle"]

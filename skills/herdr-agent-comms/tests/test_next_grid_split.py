@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Fixture tests for next_grid_split.py's pane-selection algorithm.
+"""Fixture tests for next_grid_split.py's equal-width column planning.
 
 Run directly (stdlib unittest only, no live herdr needed):
     python3 -m unittest discover -s skills/herdr-agent-comms/tests -p 'test_*.py'
+
+Covers the pure-arithmetic core only (ordering panes left to right, and the
+1/N share for N columns after a split). The actual `herdr pane split
+--ratio` / `herdr pane resize --amount` semantics are NOT exercised here —
+there is no live herdr server in this test harness to confirm what those
+flags actually do; see the module docstring in next_grid_split.py.
 """
 
 from __future__ import annotations
@@ -13,101 +19,88 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from next_grid_split import choose_target  # noqa: E402
+from next_grid_split import plan_equal_width_split  # noqa: E402
 
 
 def panes(*rects):
     return [
-        {"pane_id": pid, "rect": {"width": w, "height": h}}
-        for pid, w, h in rects
+        {"pane_id": pid, "rect": {"x": x, "width": w}}
+        for pid, x, w in rects
     ]
 
 
-class ChooseTargetTests(unittest.TestCase):
-    def test_first_split_of_single_pane_always_down(self):
-        # Regression guard for the documented "vertical panel first" default:
-        # a lone, wide root pane must still split down, not right, even
-        # though a naive aspect check on 200x50 would pick right.
-        layout = panes(("root", 200, 50))
-        target, direction = choose_target(layout, "root")
-        self.assertEqual(target, "root")
-        self.assertEqual(direction, "down")
+class PlanEqualWidthSplitTests(unittest.TestCase):
+    def test_single_pane_plans_two_columns(self):
+        layout = panes(("root", 0, 200))
+        ordered, new_count = plan_equal_width_split(layout, "root")
+        self.assertEqual(ordered, ["root"])
+        self.assertEqual(new_count, 2)
 
-    def test_first_split_of_single_pane_down_even_when_tall(self):
-        layout = panes(("root", 40, 200))
-        target, direction = choose_target(layout, "root")
-        self.assertEqual(target, "root")
-        self.assertEqual(direction, "down")
+    def test_orders_panes_left_to_right_by_x(self):
+        layout = panes(("sub1", 100, 100), ("root", 0, 100))
+        ordered, new_count = plan_equal_width_split(layout, "root")
+        self.assertEqual(ordered, ["root", "sub1"])
+        self.assertEqual(new_count, 3)
 
-    def test_later_split_picks_largest_pane(self):
-        layout = panes(("root", 100, 25), ("sub1", 200, 25))
-        target, _direction = choose_target(layout, "root")
-        self.assertEqual(target, "sub1")
+    def test_three_existing_columns_plans_fourth(self):
+        layout = panes(("root", 0, 66), ("sub1", 66, 67), ("sub2", 133, 67))
+        ordered, new_count = plan_equal_width_split(layout, "root")
+        self.assertEqual(ordered, ["root", "sub1", "sub2"])
+        self.assertEqual(new_count, 4)
 
-    def test_later_split_ties_prefer_root(self):
-        layout = panes(("root", 200, 25), ("sub1", 200, 25))
-        target, _direction = choose_target(layout, "root")
-        self.assertEqual(target, "root")
+    def test_missing_root_pane_still_plans_from_layout(self):
+        layout = panes(("a", 0, 50), ("b", 50, 50))
+        ordered, new_count = plan_equal_width_split(layout, None)
+        self.assertEqual(ordered, ["a", "b"])
+        self.assertEqual(new_count, 3)
 
-    def test_later_split_direction_follows_target_aspect_wide(self):
-        layout = panes(("root", 200, 25), ("sub1", 200, 25))
-        _target, direction = choose_target(layout, "root")
-        self.assertEqual(direction, "right")
-
-    def test_later_split_targets_largest_even_if_another_pane_is_taller(self):
-        # "a" is the largest pane by area (200x25=5000 > 40x50=2000) and is
-        # wide, so it's both the target and gets `right`.
-        layout = panes(("a", 200, 25), ("b", 40, 50))
-        target, direction = choose_target(layout, "a")
-        self.assertEqual(target, "a")
-        self.assertEqual(direction, "right")
-
-    def test_later_split_direction_down_for_tall_target(self):
-        layout = panes(("root", 40, 200), ("sub1", 10, 10))
-        target, direction = choose_target(layout, "root")
-        self.assertEqual(target, "root")
-        self.assertEqual(direction, "down")
-
-    def test_missing_root_pane_falls_back_to_largest(self):
-        layout = panes(("a", 50, 50), ("b", 100, 100))
-        target, _direction = choose_target(layout, None)
-        self.assertEqual(target, "b")
+    def test_root_pane_not_in_layout_warns_but_still_plans(self):
+        layout = panes(("a", 0, 50), ("b", 50, 50))
+        ordered, new_count = plan_equal_width_split(layout, "missing-root")
+        self.assertEqual(ordered, ["a", "b"])
+        self.assertEqual(new_count, 3)
 
     def test_no_usable_rects_raises(self):
-        layout = [{"pane_id": "x", "rect": {"width": 0, "height": 0}}]
+        layout = [{"pane_id": "x", "rect": {"x": 0, "width": 0}}]
         with self.assertRaises(SystemExit):
-            choose_target(layout, "x")
+            plan_equal_width_split(layout, "x")
 
-    def test_three_agent_spawn_sequence_produces_balanced_grid(self):
-        """End-to-end simulation: spawn 3 sub-agents from one root pane and
-        confirm no pane degenerates into a narrow sliver (regression guard
-        for the "wide roots only create narrow columns" bug).
+    def test_panes_missing_rect_fields_are_dropped(self):
+        layout = [
+            {"pane_id": "root", "rect": {"x": 0, "width": 100}},
+            {"pane_id": "ghost"},
+        ]
+        ordered, new_count = plan_equal_width_split(layout, "root")
+        self.assertEqual(ordered, ["root"])
+        self.assertEqual(new_count, 2)
+
+    def test_four_agent_spawn_sequence_converges_to_equal_shares(self):
+        """End-to-end simulation: spawn 3 sub-agents from one root pane,
+        each time re-running the planner and applying the emitted resize
+        plan, and confirm every column ends up the same width.
         """
-        state = {"root": {"w": 200.0, "h": 50.0}}
+        state = {"root": {"x": 0.0, "w": 200.0}}
 
-        def split(pane_id, direction):
-            w, h = state[pane_id]["w"], state[pane_id]["h"]
+        def apply_plan(ordered, new_count):
+            share = 200.0 / new_count
             new_id = f"p{len(state) + 1}"
-            if direction == "down":
-                state[pane_id] = {"w": w, "h": h / 2}
-                state[new_id] = {"w": w, "h": h / 2}
-            else:
-                state[pane_id] = {"w": w / 2, "h": h}
-                state[new_id] = {"w": w / 2, "h": h}
-            return new_id
+            state[new_id] = {"x": 0.0, "w": share}
+            x = 0.0
+            for pane_id in ordered + [new_id]:
+                state[pane_id]["x"] = x
+                state[pane_id]["w"] = share
+                x += share
 
         for _ in range(3):
-            layout = panes(*[(pid, v["w"], v["h"]) for pid, v in state.items()])
-            target, direction = choose_target(layout, "root")
-            split(target, direction)
+            layout = panes(*[(pid, v["x"], v["w"]) for pid, v in state.items()])
+            ordered, new_count = plan_equal_width_split(layout, "root")
+            apply_plan(ordered, new_count)
 
         self.assertEqual(len(state), 4)  # root + 3 sub-agents
-        areas = [v["w"] * v["h"] for v in state.values()]
-        # Balanced grid: no pane should be a sliver relative to an even split.
-        even_share = (200.0 * 50.0) / 4
-        for area in areas:
-            self.assertGreater(area, even_share * 0.4)
-            self.assertLess(area, even_share * 2.5)
+        widths = [v["w"] for v in state.values()]
+        expected = 200.0 / 4
+        for w in widths:
+            self.assertAlmostEqual(w, expected, places=6)
 
 
 if __name__ == "__main__":
