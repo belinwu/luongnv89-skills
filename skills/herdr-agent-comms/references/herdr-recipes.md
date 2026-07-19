@@ -109,15 +109,21 @@ for p in "${fleet[@]}"; do
   python3 "$here/wait_for_idle.py" "$p" --ready --timeout 60 --no-print &
   rpids+=("$!:$p")
 done
+ready_failed=0
 for e in "${rpids[@]}"; do
   jp="${e%%:*}"; pane="${e#*:}"
   if wait "$jp"; then echo "$pane: ready"
   else rc=$?
+    ready_failed=1   # any non-ready sub-agent fails the whole fleet spawn
     case "$rc" in 3) echo "$pane: BLOCKED — a human must answer a dialog" >&2 ;;
                   2) echo "$pane: not ready within 60s (timeout)" >&2 ;;
                   *) echo "$pane: readiness check failed (rc $rc)" >&2 ;; esac
   fi
 done
+# Do NOT assign work if any agent isn't ready — abort so a blocked/timed-out
+# pane never receives a task (a bare readiness loop that only echoes would let
+# the caller proceed as if the fleet were up).
+[ "$ready_failed" -eq 0 ] || { echo "Fleet not fully ready; aborting before task assignment." >&2; exit 1; }
 ```
 
 ### Grid heuristics
@@ -335,15 +341,31 @@ for t in "${targets[@]}"; do
   panes+=("$p"); labels+=("$t")
 done
 
-# Preflight: reject panes that are `working` (busy with unrelated prior work)
-# or `blocked` (trust/auth dialog — typing into it submits garbage, not a
-# task). Matches scripts/broadcast.sh Phase 1b.
-ready_panes=(); ready_labels=()
+# Preflight: reject panes that are `working`, `blocked`, or whose status we
+# can't verify (a failed/malformed `herdr pane get`). Matches
+# scripts/broadcast.sh Phase 1b — the status read is FAIL-CLOSED: a lookup or
+# parse failure returns non-zero (NOT an empty "safe" status), so an
+# unverifiable pane is skipped, never sent to. `skipped_any` folds every
+# skipped target into the final exit status so a mixed bad+good broadcast
+# does not report success.
+pane_status() {  # prints status, returns non-zero on lookup/parse failure
+  local out
+  out="$(herdr pane get "$1" 2>/dev/null)" || return 1
+  printf '%s' "$out" | python3 -c '
+import sys, json
+try: pane = json.load(sys.stdin)["result"]["pane"]
+except Exception: sys.exit(1)
+print(pane.get("agent_status") or "unknown")'
+}
+ready_panes=(); ready_labels=(); skipped_any=0
 for i in "${!panes[@]}"; do
-  st=$(herdr pane get "${panes[$i]}" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"].get("agent_status",""))')
+  if ! st="$(pane_status "${panes[$i]}")"; then
+    echo "Error: '${labels[$i]}' (${panes[$i]}) status could not be verified — skipped." >&2
+    skipped_any=1; continue
+  fi
   case "$st" in
-    working) echo "Error: '${labels[$i]}' (${panes[$i]}) is already working — skipped." >&2; continue ;;
-    blocked) echo "Error: '${labels[$i]}' (${panes[$i]}) is blocked (trust/auth dialog) — skipped." >&2; continue ;;
+    working) echo "Error: '${labels[$i]}' (${panes[$i]}) is already working — skipped." >&2; skipped_any=1; continue ;;
+    blocked) echo "Error: '${labels[$i]}' (${panes[$i]}) is blocked (trust/auth dialog) — skipped." >&2; skipped_any=1; continue ;;
   esac
   ready_panes+=("${panes[$i]}"); ready_labels+=("${labels[$i]}")
 done
@@ -374,7 +396,9 @@ for i in "${!panes[@]}"; do
     --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
   pids+=("$!:${panes[$i]}")
 done
-overall=0
+# Seed the result with the preflight outcome: any busy/blocked/unverifiable
+# target that was skipped above must fail the whole broadcast, not vanish.
+overall="$skipped_any"
 for e in "${pids[@]}"; do
   jp="${e%%:*}"; pane="${e#*:}"
   if wait "$jp"; then echo "$pane: reply ready"

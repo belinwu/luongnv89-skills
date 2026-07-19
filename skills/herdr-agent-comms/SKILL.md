@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.10.0
+  version: 1.11.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -210,15 +210,14 @@ When using `herdr agent start … -- <argv>`, put only the launcher (+ model/thi
 
 ### 2c — Ready, then assign work
 
-```bash
-# boot → idle (or blocked on trust) — per SUB-agent pane
-herdr wait agent-status "$sub_pane" --status idle --timeout 60000
-# if timeout: herdr pane get / herdr agent explain "$sub_pane"
-# if blocked: surface to user (Rule 7)
-
-# Assign through Phase 4 so a pre-send baseline is captured before pane run.
-# Then collect through Phase 5 with that baseline.
-```
+Run a **concurrent readiness pass** after all spawns, and do **not** assign
+work unless every sub-agent is ready. Use `wait_for_idle.py --ready` per pane
+(returns 0 ready, 2 timeout, 3 **blocked**) — a bare `wait agent-status idle`
+would turn a trust/auth dialog into a generic 60s timeout instead of surfacing
+it. Launch all `--ready` waits in the background, then `wait "$pid"` on each and
+**abort if any is non-zero** (full loop in the Example below and in recipes
+"Concurrent readiness pass"). Only after the whole fleet is ready do you assign
+work through Phase 4 (baseline before `pane run`) and collect via Phase 5.
 
 **Fleet spawn:** split every sub-agent first (`--no-focus`), launch every CLI, then wait/read concurrently — don't fully serialize spawn→wait→read per agent when the user wants parallel work. `scripts/broadcast.sh` fans messages after spawn.
 
@@ -316,10 +315,15 @@ rm -f "$baseline_file"
 Manual fallback after delivery is verified:
 
 ```bash
-# Poll until idle|done|blocked or budget spent.
+# Poll until idle|done|blocked or budget spent. FAIL-CLOSED status read: a
+# failed/malformed `herdr pane get` exits with an error instead of falling
+# through to `sleep` as if the pane were merely `unknown`.
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
-  st=$(herdr pane get "$pane_id" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"].get("agent_status",""))')
+  out=$(herdr pane get "$pane_id" 2>/dev/null) || { echo "Error: status lookup failed for $pane_id" >&2; exit 1; }
+  st=$(printf '%s' "$out" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin)["result"]["pane"].get("agent_status") or "unknown")
+except Exception: sys.exit(1)') || { echo "Error: could not parse status for $pane_id" >&2; exit 1; }
   case "$st" in
     done|idle) echo "settled:$st"; break ;;
     blocked) echo "blocked"; break ;;
@@ -420,27 +424,34 @@ done
 # references/herdr-recipes.md ("Spawn N sub-agents into an equal-width grid")
 # HERE before the calls below — this example calls it but does not redefine
 # it. That function guards planning, split, pane-id parse, equalize, rename,
-# launch, and readiness, prints the pane id ONLY after a confirmed launch, and
-# returns non-zero on any failure.
+# and launch, and prints the pane id ONLY after a confirmed launch. It does
+# NOT wait on readiness — that is the SEPARATE concurrent pass below (a single
+# idle-wait would hide a `blocked` boot behind a 60s timeout).
 
 # Every caller MUST abort on non-zero — `$(...)` hides spawn_sub's exit status:
 p1="$(spawn_sub reviewer 'pi --thinking medium')" || { echo "reviewer failed to place; aborting" >&2; exit 1; }
 p2="$(spawn_sub tests 'pi --thinking low')" || { echo "tests failed to place; aborting" >&2; exit 1; }
 
-# Capture before send so even instant replies are observable.
-b1="$(mktemp)"; b2="$(mktemp)"
-herdr pane read "$p1" --source recent-unwrapped --lines 80 >"$b1"
-herdr pane read "$p2" --source recent-unwrapped --lines 80 >"$b2"
-s1="$(date +%s)_$$_1_$RANDOM"; s2="$(date +%s)_$$_2_$RANDOM"
-herdr pane run "$p1" "Review recent commits for risk; bullet findings only. When finished, concatenate and print: HERDR_DONE_ and $s1"
-herdr pane run "$p2" "Outline a minimal test plan. When finished, concatenate and print: HERDR_DONE_ and $s2"
+# Readiness gate — do NOT assign work unless every sub-agent is ready
+# (`--ready` returns 3 on blocked, 2 on timeout). See recipes "Concurrent
+# readiness pass" for the full loop; abort the fleet if any pane isn't ready.
+ready_failed=0; rpids=()
+for p in "$p1" "$p2"; do
+  python3 "$here/wait_for_idle.py" "$p" --ready --timeout 60 --no-print &
+  rpids+=("$!:$p")
+done
+for e in "${rpids[@]}"; do jp="${e%%:*}"; pane="${e#*:}"
+  wait "$jp" || { ready_failed=1; echo "$pane: not ready (rc $?)" >&2; }
+done
+[ "$ready_failed" -eq 0 ] || { echo "Fleet not ready; not assigning work." >&2; exit 1; }
 
-# Same tab: root_pane + p1 + p2
-python3 "$here/wait_for_idle.py" "$p1" --timeout 180 --lines 80 --baseline-file "$b1" --completion-marker "HERDR_DONE_$s1"
-python3 "$here/wait_for_idle.py" "$p2" --timeout 180 --lines 80 --baseline-file "$b2" --completion-marker "HERDR_DONE_$s2"
-rm -f "$b1" "$b2"
-# optional: use "$here/broadcast.sh" to baseline/send/wait concurrently
-# optional: herdr agent focus reviewer
+# Assign + collect: prefer the script — it baselines, sends, waits concurrently,
+# and aggregates every send/waiter status into its exit code (see findings this
+# skill has hardened). Check its exit; do not treat a partial fleet as success.
+"$here/broadcast.sh" "Review recent commits for risk; bullet findings only." reviewer \
+  || { echo "broadcast reported failures (blocked/timeout/unverifiable) — see above" >&2; exit 1; }
+# For the manual (non-script) baseline→send→wait pattern with per-waiter status
+# aggregation, see references/delivery-and-waiting.md "Concurrent fleet waits".
 ```
 
 ## Edge Cases

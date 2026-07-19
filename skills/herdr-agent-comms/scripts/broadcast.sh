@@ -221,7 +221,11 @@ for pid in "${pids[@]+"${pids[@]}"}"; do wait "$pid"; done
 # Phase 5: emit labeled blocks — dispatched panes first (settled/timeout/
 # blocked/error), then a distinct block per pane that never got a send.
 overall=0
-if [ "${#busy[@]}" -gt 0 ] || [ "${#blocked[@]}" -gt 0 ] || [ "${#send_failed[@]}" -gt 0 ]; then
+# Any pane we could NOT safely deliver to fails the broadcast — including
+# `unverifiable` targets (status lookup/parse failed). Omitting them here made
+# a mixed bad+good broadcast exit 0 even though some targets were skipped.
+if [ "${#busy[@]}" -gt 0 ] || [ "${#blocked[@]}" -gt 0 ] \
+   || [ "${#unverifiable[@]}" -gt 0 ] || [ "${#send_failed[@]}" -gt 0 ]; then
   overall=1
 fi
 for i in "${wait_indices[@]+"${wait_indices[@]}"}"; do

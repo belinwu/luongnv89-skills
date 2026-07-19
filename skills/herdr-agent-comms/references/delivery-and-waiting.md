@@ -78,11 +78,22 @@ python3 "$here/wait_for_idle.py" "$pane" --timeout 180 --lines 80 \
   --baseline-file "$baseline" --completion-marker "$completion_marker"
 rc=$?
 rm -f "$baseline"
+# Act on the waiter's exit — 0 done/idle, 2 timeout, 3 blocked (needs human).
+case "$rc" in
+  0) : ;;
+  3) echo "$pane: BLOCKED — a human must answer a dialog" >&2 ;;
+  2) echo "$pane: TIMEOUT before completion" >&2 ;;
+  *) echo "$pane: waiter failed (rc $rc)" >&2 ;;
+esac
 
-# Manual: poll pane get for idle|done|blocked while re-waiting in short slices
+# Manual alternative: poll pane get for idle|done|blocked. FAIL-CLOSED status
+# read — a failed/malformed `herdr pane get` errors out rather than sleeping.
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
-  st=$(herdr pane get "$pane" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"].get("agent_status",""))')
+  out=$(herdr pane get "$pane" 2>/dev/null) || { echo "status lookup failed for $pane" >&2; exit 1; }
+  st=$(printf '%s' "$out" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin)["result"]["pane"].get("agent_status") or "unknown")
+except Exception: sys.exit(1)') || { echo "status parse failed for $pane" >&2; exit 1; }
   case "$st" in
     done|idle) break ;;
     blocked) echo blocked; break ;;

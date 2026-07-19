@@ -211,24 +211,42 @@ class BroadcastDedupeTests(unittest.TestCase):
 
     def test_failed_status_lookup_skips_only_bad_target(self):
         """A verifiable idle pane alongside an unverifiable one: the good pane
-        still gets the message; the bad one is skipped."""
+        still gets the message; the bad one is skipped. AND the overall exit is
+        non-zero — a mixed bad+good broadcast must NOT report success just
+        because the good pane went through (P3 round 6/7: `unverifiable` was
+        omitted from the final aggregation, so mixed broadcasts returned 0)."""
         self.h.set_pane("bad1", "idle", "status get fails\n", name="flaky", fail_get=True)
         self.h.set_pane("ok1", "idle", "ready\n", name="ready")
 
         def finish_ready():
-            time.sleep(0.2)
-            st = self.h.read_state()
-            m = re.search(r"HERDR_DONE_ and (\S+)", st["panes"]["ok1"]["text"])
+            # Poll for the send (timing isn't fixed — the fail_get target adds
+            # preflight latency), then reply with the joined marker so the good
+            # pane's waiter settles cleanly (rc 0). This is important for THIS
+            # test: the good pane MUST complete successfully so the only reason
+            # the broadcast can exit non-zero is the unverifiable aggregation.
+            deadline = time.time() + 6
+            m = None
+            while time.time() < deadline and m is None:
+                m = re.search(r"HERDR_DONE_ and (\S+)", self.h.read_state()["panes"]["ok1"]["text"])
+                if m is None:
+                    time.sleep(0.02)
             if m:
                 self.h.append_text("ok1", f"HERDR_DONE_{m.group(1)}\n")
             self.h.set_status("ok1", "idle")
 
         t = threading.Thread(target=finish_ready)
         t.start()
-        cp = self.h.run_broadcast("do the thing", ["flaky", "ready"], timeout=6)
+        cp = self.h.run_broadcast("do the thing", ["flaky", "ready"], timeout=8)
         t.join()
-        self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0)
+        # good pane got the message and settled...
         self.assertGreaterEqual(self.h.count_pane_run_invocations("ok1"), 1)
+        self.assertIn("ready", cp.stdout)
+        # ...bad pane was skipped...
+        self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0)
+        # ...and DESPITE the good pane succeeding, the mixed result is a FAILURE
+        # (the unverifiable target must fold into the exit status, not vanish).
+        self.assertNotEqual(cp.returncode, 0,
+                            msg=f"mixed unverifiable+good must exit non-zero. stderr={cp.stderr!r}")
 
 
 class BroadcastPartialFailureTests(unittest.TestCase):
