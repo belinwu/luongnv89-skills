@@ -31,7 +31,7 @@
 
 ```mermaid
 graph TD
-    A["Resolve root pane + tab + workspace"] --> B["next_grid_split · split rightmost + resize all to equal width"]
+    A["Resolve root pane + tab + workspace"] --> B["next_grid_split · split rightmost + --equalize to equal width"]
     B --> C["Rename sub-pane · launch CLI · wait idle"]
     C --> D["Submit tasks · broadcast"]
     D --> E["Wait agent-status done|idle"]

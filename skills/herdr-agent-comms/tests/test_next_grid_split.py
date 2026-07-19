@@ -4,11 +4,15 @@
 Run directly (stdlib unittest only, no live herdr needed):
     python3 -m unittest discover -s skills/herdr-agent-comms/tests -p 'test_*.py'
 
-Covers the pure-arithmetic core only (ordering panes left to right, and the
-1/N share for N columns after a split). The actual `herdr pane split
---ratio` / `herdr pane resize --amount` semantics are NOT exercised here —
-there is no live herdr server in this test harness to confirm what those
-flags actually do; see the module docstring in next_grid_split.py.
+These cover the pure arithmetic that decides the split ratio and each
+equalizer resize op. The exact `herdr pane split --ratio` / `herdr pane
+resize --amount` semantics they encode were verified LIVE against herdr
+0.7.4 (documented in SKILL.md "Equal-width columns — verified semantics"):
+`--ratio` = the existing/left child's fraction of the split pane; `--amount`
+= a cell delta as a fraction of the tab area width, growing the neighbor on
+`--direction`. `test_equalizer_sweep_converges_on_redistribution_model`
+simulates the observed proportional redistribution and confirms the
+outermost-first grow sweep is a contraction (converges to equal width).
 """
 
 from __future__ import annotations
@@ -19,7 +23,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from next_grid_split import plan_equal_width_split  # noqa: E402
+from next_grid_split import (  # noqa: E402
+    area_width_from_layout,
+    boundary_resize_op,
+    equal_targets,
+    plan_next_split,
+)
 
 
 def panes(*rects):
@@ -29,78 +38,175 @@ def panes(*rects):
     ]
 
 
-class PlanEqualWidthSplitTests(unittest.TestCase):
+class PlanNextSplitTests(unittest.TestCase):
     def test_single_pane_plans_two_columns(self):
-        layout = panes(("root", 0, 200))
-        ordered, new_count = plan_equal_width_split(layout, "root")
-        self.assertEqual(ordered, ["root"])
+        rightmost, new_count = plan_next_split(panes(("root", 0, 200)), "root")
+        self.assertEqual(rightmost, "root")
         self.assertEqual(new_count, 2)
 
-    def test_orders_panes_left_to_right_by_x(self):
-        layout = panes(("sub1", 100, 100), ("root", 0, 100))
-        ordered, new_count = plan_equal_width_split(layout, "root")
-        self.assertEqual(ordered, ["root", "sub1"])
+    def test_orders_panes_left_to_right_and_splits_rightmost(self):
+        rightmost, new_count = plan_next_split(
+            panes(("sub1", 100, 100), ("root", 0, 100)), "root"
+        )
+        self.assertEqual(rightmost, "sub1")
         self.assertEqual(new_count, 3)
 
     def test_three_existing_columns_plans_fourth(self):
-        layout = panes(("root", 0, 66), ("sub1", 66, 67), ("sub2", 133, 67))
-        ordered, new_count = plan_equal_width_split(layout, "root")
-        self.assertEqual(ordered, ["root", "sub1", "sub2"])
+        rightmost, new_count = plan_next_split(
+            panes(("root", 0, 66), ("sub1", 66, 67), ("sub2", 133, 67)), "root"
+        )
+        self.assertEqual(rightmost, "sub2")
         self.assertEqual(new_count, 4)
 
     def test_missing_root_pane_still_plans_from_layout(self):
-        layout = panes(("a", 0, 50), ("b", 50, 50))
-        ordered, new_count = plan_equal_width_split(layout, None)
-        self.assertEqual(ordered, ["a", "b"])
+        rightmost, new_count = plan_next_split(panes(("a", 0, 50), ("b", 50, 50)), None)
+        self.assertEqual(rightmost, "b")
         self.assertEqual(new_count, 3)
 
     def test_root_pane_not_in_layout_warns_but_still_plans(self):
-        layout = panes(("a", 0, 50), ("b", 50, 50))
-        ordered, new_count = plan_equal_width_split(layout, "missing-root")
-        self.assertEqual(ordered, ["a", "b"])
+        rightmost, new_count = plan_next_split(
+            panes(("a", 0, 50), ("b", 50, 50)), "missing-root"
+        )
+        self.assertEqual(rightmost, "b")
         self.assertEqual(new_count, 3)
 
     def test_no_usable_rects_raises(self):
-        layout = [{"pane_id": "x", "rect": {"x": 0, "width": 0}}]
         with self.assertRaises(SystemExit):
-            plan_equal_width_split(layout, "x")
+            plan_next_split([{"pane_id": "x", "rect": {"x": 0, "width": 0}}], "x")
 
     def test_panes_missing_rect_fields_are_dropped(self):
         layout = [
             {"pane_id": "root", "rect": {"x": 0, "width": 100}},
             {"pane_id": "ghost"},
         ]
-        ordered, new_count = plan_equal_width_split(layout, "root")
-        self.assertEqual(ordered, ["root"])
+        rightmost, new_count = plan_next_split(layout, "root")
+        self.assertEqual(rightmost, "root")
         self.assertEqual(new_count, 2)
 
-    def test_four_agent_spawn_sequence_converges_to_equal_shares(self):
-        """End-to-end simulation: spawn 3 sub-agents from one root pane,
-        each time re-running the planner and applying the emitted resize
-        plan, and confirm every column ends up the same width.
+
+class EqualTargetsTests(unittest.TestCase):
+    def test_even_division(self):
+        self.assertEqual(equal_targets(5, 210), [42, 42, 42, 42, 42])
+
+    def test_remainder_goes_to_leftmost_columns(self):
+        # 210 / 4 = 52.5 -> two columns get 53, two get 52; sum stays 210.
+        self.assertEqual(equal_targets(4, 210), [53, 53, 52, 52])
+        self.assertEqual(sum(equal_targets(4, 210)), 210)
+
+    def test_single_column(self):
+        self.assertEqual(equal_targets(1, 210), [210])
+
+    def test_zero_columns_raises(self):
+        with self.assertRaises(SystemExit):
+            equal_targets(0, 210)
+
+
+class BoundaryResizeOpTests(unittest.TestCase):
+    ids = ["a", "b", "c"]
+
+    def test_boundary_must_move_right_grows_left_column(self):
+        # widths 40/80/90 (area 210), targets 70/70/70. Boundary 0 cum=40,
+        # target cum=70 -> move right by 30 -> grow column a on its right.
+        op = boundary_resize_op(self.ids, [40, 80, 90], [70, 70, 70], 210, 0)
+        self.assertEqual(op, ("a", "right", 30 / 210))
+
+    def test_boundary_must_move_left_grows_right_column(self):
+        # widths 105/53/52, targets 70/70/70. Boundary 0 cum=105, target=70
+        # -> move left by 35 -> grow the RIGHT column b on its left edge.
+        op = boundary_resize_op(self.ids, [105, 53, 52], [70, 70, 70], 210, 0)
+        self.assertEqual(op, ("b", "left", 35 / 210))
+
+    def test_on_target_returns_none(self):
+        op = boundary_resize_op(self.ids, [70, 70, 70], [70, 70, 70], 210, 0)
+        self.assertIsNone(op)
+
+    def test_sub_cell_delta_returns_none(self):
+        # cum 70.4 vs target 70 -> 0.4 cell, nothing herdr can act on.
+        op = boundary_resize_op(self.ids, [70.4, 70, 69.6], [70, 70, 70], 210, 0)
+        self.assertIsNone(op)
+
+
+class AreaWidthTests(unittest.TestCase):
+    def test_reads_explicit_area(self):
+        data = {"layout": {"area": {"width": 210}, "panes": panes(("a", 0, 210))}}
+        self.assertEqual(area_width_from_layout(data), 210)
+
+    def test_falls_back_to_summed_widths(self):
+        data = {"layout": {"panes": panes(("a", 0, 100), ("b", 100, 110))}}
+        self.assertEqual(area_width_from_layout(data), 210)
+
+
+class EqualizerConvergenceTests(unittest.TestCase):
+    """Simulate the live herdr redistribution behaviour and confirm the
+    outermost-first, always-grow boundary sweep is a contraction toward
+    equal width. The model mirrors what was observed live: a resize moves
+    one boundary by the requested delta and redistributes the freed/absorbed
+    cells *proportionally* among the panes on the other side of that
+    boundary.
+    """
+
+    AREA = 210
+
+    def _resize(self, widths, pane_index, direction, amount):
+        """Apply one resize to a copy of `widths`, returning the new list.
+
+        Moves the boundary between `pane_index` and its neighbor on
+        `direction`, redistributing `delta` cells proportionally across the
+        panes on the far side of that boundary.
         """
-        state = {"root": {"x": 0.0, "w": 200.0}}
+        w = list(widths)
+        delta = amount * self.AREA
+        if direction == "right":
+            # grow pane_index rightward: boundary between pane_index and
+            # pane_index+1 moves right; cells taken from all panes to the right.
+            w[pane_index] += delta
+            right = list(range(pane_index + 1, len(w)))
+            total = sum(w[i] for i in right)
+            for i in right:
+                w[i] -= delta * (w[i] / total)
+        else:  # left: grow pane_index leftward, boundary between it and
+            # pane_index-1 moves left; cells taken from panes to the left.
+            w[pane_index] += delta
+            left = list(range(0, pane_index))
+            total = sum(w[i] for i in left)
+            for i in left:
+                w[i] -= delta * (w[i] / total)
+        return w
 
-        def apply_plan(ordered, new_count):
-            share = 200.0 / new_count
-            new_id = f"p{len(state) + 1}"
-            state[new_id] = {"x": 0.0, "w": share}
-            x = 0.0
-            for pane_id in ordered + [new_id]:
-                state[pane_id]["x"] = x
-                state[pane_id]["w"] = share
-                x += share
+    def _sweep_once(self, widths):
+        ids = [f"c{i}" for i in range(len(widths))]
+        targets = equal_targets(len(widths), self.AREA)
+        for boundary in range(len(widths) - 1):
+            op = boundary_resize_op(ids, widths, targets, self.AREA, boundary)
+            if op is None:
+                continue
+            pane_id, direction, amount = op
+            idx = ids.index(pane_id)
+            widths = self._resize(widths, idx, direction, amount)
+        return widths
 
-        for _ in range(3):
-            layout = panes(*[(pid, v["x"], v["w"]) for pid, v in state.items()])
-            ordered, new_count = plan_equal_width_split(layout, "root")
-            apply_plan(ordered, new_count)
+    def test_four_column_decay_converges(self):
+        # geometric decay a naive split leaves behind: 105/35/18/52-ish.
+        widths = [105.0, 35.0, 18.0, 52.0]
+        # normalize to area
+        scale = self.AREA / sum(widths)
+        widths = [w * scale for w in widths]
+        start_spread = max(widths) - min(widths)
+        for _ in range(12):
+            if max(widths) - min(widths) <= 1.5:
+                break
+            widths = self._sweep_once(widths)
+        # This float model converges to ~1 cell; live herdr (integer cells)
+        # lands at spread 0 for this case. Either way the sweep is a strong
+        # contraction — assert it collapsed to a near-equal fixed point.
+        self.assertLess(max(widths) - min(widths), start_spread)
+        self.assertLessEqual(max(widths) - min(widths), 1.5)
 
-        self.assertEqual(len(state), 4)  # root + 3 sub-agents
-        widths = [v["w"] for v in state.values()]
-        expected = 200.0 / 4
-        for w in widths:
-            self.assertAlmostEqual(w, expected, places=6)
+    def test_already_equal_is_a_fixed_point(self):
+        widths = [70.0, 70.0, 70.0]
+        out = self._sweep_once(widths)
+        for a, b in zip(out, widths):
+            self.assertAlmostEqual(a, b, places=6)
 
 
 if __name__ == "__main__":

@@ -1,41 +1,55 @@
 #!/usr/bin/env python3
-"""Pick the next pane to split for an equal-width column grid layout.
+"""Plan (and optionally drive) an equal-width column grid in a Herdr tab.
 
 All panes in the tab (root + every sub-agent) are kept as equal-width
-columns side by side, left to right. Adding the Nth pane means:
-  1. Split the rightmost (last) column `right` so the new pane lands as
-     the new rightmost column, sized to the target equal share.
-  2. Resize every pre-existing column down to that same equal share (they
-     were each 1/(N-1) wide before the split; they need to become 1/N).
+columns side by side, left to right. This models the *real* Herdr 0.7.4
+`pane split` / `pane resize` semantics, verified live against a running
+herdr server (see SKILL.md "Equal-width columns — verified semantics"):
 
-This intentionally replaces the older "largest pane by area, direction from
-aspect ratio" heuristic: that heuristic optimized for a balanced 2D grid,
-not for uniform column width. Equal-width columns are a stronger, simpler
-constraint that a single split's ratio cannot satisfy on its own once more
-than one column already exists — the already-placed columns must also be
-resized, which is why this script emits a resize plan, not just a target
-pane and direction.
+  * `herdr pane split <pane> --direction right --ratio R`
+        R is the fraction the EXISTING (first/left) child keeps of the
+        pane being split; the new pane gets (1 - R). It only resizes the
+        pane you split — the other columns are untouched. So a single
+        split can NEVER equalize N >= 3 columns on its own.
 
-Reads `herdr pane layout` for the root/tab area (or a supplied JSON dump).
+  * `herdr pane resize --pane P --direction D --amount A`
+        A is a DELTA expressed as a fraction of the whole tab area width
+        (A * area_width cells), NOT an absolute target width. `--direction`
+        moves the edge on side D: for a pane that has a neighbor on side D
+        it GROWS toward that neighbor; against a wall it shrinks. The freed
+        or absorbed cells redistribute *proportionally* among the panes on
+        the other side of the moved boundary. Because that redistribution
+        perturbs columns you already placed, a single left-to-right sweep
+        does not land equal — but the sweep is a contraction: iterating it
+        converges to equal width within ~1 cell in a handful of passes
+        (verified: spread 25 -> 13 -> 5 -> 3 -> 1 for a 4-column decay).
+
+So the reliable strategy this script encodes is:
+
+  1. Add column N by splitting the current rightmost column `right` with
+     `--ratio (N-1)/N` so the new pane is born at the 1/N target share.
+  2. Run an iterative boundary equalizer: sweep internal boundaries left
+     to right, moving each toward its target cumulative position by GROWING
+     the neighbor-bearing pane; repeat until the width spread is <= 1 cell
+     (or a small iteration cap). Each pass re-reads the live layout.
+
+`--emit-plan` prints the split line only (for a shell caller that runs the
+equalizer via `equalize_columns.py`). `--equalize` runs the full live
+equalizer itself against `herdr` and exits.
 
 Usage:
+    # plan the split for the next column (default)
     python3 next_grid_split.py [--root-pane PANE_ID] [--layout-json PATH|-]
 
-Output: one line per action, so a caller can feed each directly to `herdr`:
+    # run the live iterative equalizer over the current tab
+    python3 next_grid_split.py --equalize [--root-pane PANE_ID]
 
-    split <rightmost_pane_id> right --ratio <new_pane_share>
-    resize <pane_id> <target_width_fraction>
-    resize <pane_id> <target_width_fraction>
-    ...
+Default output (one split line a caller feeds to `herdr pane split`):
 
-`<new_pane_share>` and `<target_width_fraction>` are both `1 / N` where N is
-the column count *after* the split (existing columns + the new one). The
-exact `herdr pane split --ratio` / `herdr pane resize --amount` semantics
-(fraction of remaining space vs. absolute tab fraction vs. cells) are not
-verified against a live `herdr` server by this script or its tests — the
-caller is responsible for confirming those semantics against the installed
-`herdr` version before trusting the resize step blindly (see SKILL.md
-Phase 2a and the "Equal-width columns" note there).
+    split <rightmost_pane_id> right --ratio <existing_child_ratio>
+
+where <existing_child_ratio> = (N-1)/N and N is the column count AFTER the
+split. Follow it with the equalizer (see SKILL.md Phase 2a).
 
 Exit codes:
     0 success
@@ -49,6 +63,14 @@ import json
 import shutil
 import subprocess
 import sys
+
+# Equal within this many cells is "done" — herdr rounds column widths to
+# whole terminal cells, so exact equality is impossible when area_width is
+# not divisible by the column count.
+EQUAL_TOLERANCE_CELLS = 1
+# Safety cap so a pathological layout can't loop forever. The sweep is a
+# contraction; real layouts converge in ~5 passes.
+MAX_EQUALIZE_PASSES = 12
 
 
 def load_layout(root_pane: str | None, layout_json: str | None) -> dict:
@@ -72,22 +94,50 @@ def load_layout(root_pane: str | None, layout_json: str | None) -> dict:
     return json.loads(cp.stdout)
 
 
+def _unwrap_layout(data: dict) -> dict:
+    """Return the inner `layout` object regardless of whether `data` is the
+    raw CLI envelope (`{"result": {"layout": {...}}}`), a `{"layout": {...}}`
+    fixture, or the layout dict itself."""
+    node = data.get("result", data)
+    if isinstance(node, dict) and "layout" in node:
+        node = node["layout"]
+    if not isinstance(node, dict):
+        raise SystemExit("layout JSON is not an object")
+    return node
+
+
 def panes_from_layout(data: dict) -> list[dict]:
-    layout = data.get("result", data).get("layout", data.get("result", data))
-    panes = layout.get("panes") if isinstance(layout, dict) else None
+    layout = _unwrap_layout(data)
+    panes = layout.get("panes")
     if not isinstance(panes, list) or not panes:
         raise SystemExit("layout JSON has no panes")
     return panes
 
 
-def _pane_ids_left_to_right(panes: list[dict]) -> list[str]:
-    """Order panes by rect.x so 'rightmost column' is well-defined.
+def area_width_from_layout(data: dict) -> float:
+    layout = _unwrap_layout(data)
+    area = layout.get("area") or {}
+    try:
+        width = float(area.get("width", 0))
+    except (TypeError, ValueError):
+        width = 0.0
+    if width <= 0:
+        # Fall back to the summed pane widths so fixtures without an explicit
+        # area still work.
+        width = sum(_ordered_columns(panes_from_layout(data))[1])
+    if width <= 0:
+        raise SystemExit("layout JSON has no usable area width")
+    return width
+
+
+def _ordered_columns(panes: list[dict]) -> tuple[list[str], list[float]]:
+    """Order panes by rect.x and return parallel (ids, widths) lists.
 
     Panes without a usable rect are dropped rather than guessed at — a
     missing x/width is a layout-shape error the caller should see, not
     something to silently default to 0.
     """
-    ordered: list[tuple[float, str]] = []
+    ordered: list[tuple[float, str, float]] = []
     for pane in panes:
         pane_id = pane.get("pane_id")
         rect = pane.get("rect") or {}
@@ -98,28 +148,123 @@ def _pane_ids_left_to_right(panes: list[dict]) -> list[str]:
             continue
         if not pane_id or width <= 0:
             continue
-        ordered.append((x, pane_id))
+        ordered.append((x, pane_id, width))
     if not ordered:
         raise SystemExit("no usable pane rects in layout")
     ordered.sort(key=lambda t: t[0])
-    return [pid for _, pid in ordered]
+    return [pid for _, pid, _ in ordered], [w for _, _, w in ordered]
 
 
-def plan_equal_width_split(panes: list[dict], root_pane: str | None) -> tuple[list[str], float]:
-    """Return (ordered_pane_ids_left_to_right, new_column_count) for the
-    caller to build the split + resize plan from. `root_pane` is accepted
-    for interface symmetry with the previous largest-pane heuristic and to
-    let a caller sanity-check root is present; it does not change the
-    equal-width plan (every column — root included — always converges to
-    the same share).
+def _pane_ids_left_to_right(panes: list[dict]) -> list[str]:
+    return _ordered_columns(panes)[0]
+
+
+def equal_targets(n: int, area_width: float) -> list[int]:
+    """Equal-width integer column targets summing to `area_width`.
+
+    Splits the +/-1 rounding remainder onto the leftmost columns, matching
+    how herdr distributes cells that don't divide evenly.
     """
+    if n <= 0:
+        raise SystemExit("column count must be positive")
+    total = int(round(area_width))
+    base = total // n
+    rem = total - base * n
+    return [base + (1 if i < rem else 0) for i in range(n)]
+
+
+def boundary_resize_op(
+    ids: list[str],
+    widths: list[float],
+    targets: list[int],
+    area_width: float,
+    boundary: int,
+) -> tuple[str, str, float] | None:
+    """Compute the single resize op that moves internal `boundary`
+    (between column `boundary` and `boundary+1`) toward its target
+    cumulative position, always by GROWING the neighbor-bearing pane.
+
+    Returns `(pane_id, direction, amount)` or None if already on target.
+    `amount` is a fraction of `area_width` (the herdr `--amount` unit).
+
+    * boundary must move RIGHT  -> grow left column: resize ids[boundary] right
+    * boundary must move LEFT   -> grow right column: resize ids[boundary+1] left
+    """
+    target_cum = sum(targets[: boundary + 1])
+    cur_cum = sum(widths[: boundary + 1])
+    delta = target_cum - cur_cum  # >0: boundary too far left, must move right
+    if abs(delta) < 1:  # sub-cell; nothing herdr can act on
+        return None
+    amount = abs(delta) / area_width
+    if delta > 0:
+        return (ids[boundary], "right", amount)
+    return (ids[boundary + 1], "left", amount)
+
+
+def plan_next_split(panes: list[dict], root_pane: str | None) -> tuple[str, int]:
+    """Return `(rightmost_pane_id, new_column_count)` for adding a column."""
     ordered = _pane_ids_left_to_right(panes)
     if root_pane and root_pane not in ordered:
-        # Not fatal — layout JSON may come from a fixture/test — but the
-        # caller should know root isn't part of what it's about to resize.
         print(f"Warning: root pane {root_pane!r} not found in layout", file=sys.stderr)
-    new_count = len(ordered) + 1
-    return ordered, new_count
+    return ordered[-1], len(ordered) + 1
+
+
+def _run_herdr(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["herdr", *args], text=True, capture_output=True, check=False)
+
+
+def equalize_live(root_pane: str | None) -> int:
+    """Drive the iterative boundary equalizer against a live herdr server.
+
+    Re-reads the layout each pass (resizes perturb downstream columns), and
+    stops once the width spread is within EQUAL_TOLERANCE_CELLS or the pass
+    cap is hit. Returns 0 on convergence, 1 if it never converged.
+    """
+    if not shutil.which("herdr"):
+        raise SystemExit("herdr not on PATH")
+
+    for _ in range(MAX_EQUALIZE_PASSES):
+        data = load_layout(root_pane, None)
+        ids, widths = _ordered_columns(panes_from_layout(data))
+        area = area_width_from_layout(data)
+        n = len(ids)
+        if n < 2:
+            return 0  # single column is trivially "equal"
+        targets = equal_targets(n, area)
+        spread = max(widths) - min(widths)
+        if spread <= EQUAL_TOLERANCE_CELLS:
+            return 0
+        for boundary in range(n - 1):
+            # Re-read after each resize: one resize shifts every column to the
+            # right of the moved boundary, so later ops in this pass need the
+            # updated widths to aim correctly.
+            data = load_layout(root_pane, None)
+            ids, widths = _ordered_columns(panes_from_layout(data))
+            area = area_width_from_layout(data)
+            targets = equal_targets(len(ids), area)
+            if boundary >= len(ids) - 1:
+                break
+            op = boundary_resize_op(ids, widths, targets, area, boundary)
+            if op is None:
+                continue
+            pane_id, direction, amount = op
+            _run_herdr(
+                "pane", "resize", "--pane", pane_id,
+                "--direction", direction, "--amount", f"{amount:.6f}",
+            )
+
+    # Final check after the cap.
+    data = load_layout(root_pane, None)
+    _, widths = _ordered_columns(panes_from_layout(data))
+    spread = max(widths) - min(widths)
+    if spread <= EQUAL_TOLERANCE_CELLS:
+        return 0
+    print(
+        f"Warning: columns not fully equal after {MAX_EQUALIZE_PASSES} passes "
+        f"(spread {spread:.0f} cells); layout is best-effort.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def main() -> int:
@@ -134,21 +279,30 @@ def main() -> int:
         "--layout-json",
         help="layout JSON path, or '-' for stdin (skips herdr pane layout)",
     )
+    ap.add_argument(
+        "--equalize",
+        action="store_true",
+        help="run the live iterative boundary equalizer over the current tab and exit",
+    )
     args = ap.parse_args()
+
+    if args.equalize:
+        try:
+            return equalize_live(args.root_pane)
+        except (OSError, json.JSONDecodeError, SystemExit) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
 
     try:
         data = load_layout(args.root_pane, args.layout_json)
-        ordered, new_count = plan_equal_width_split(panes_from_layout(data), args.root_pane)
+        rightmost, new_count = plan_next_split(panes_from_layout(data), args.root_pane)
     except (OSError, json.JSONDecodeError, SystemExit) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    share = 1.0 / new_count
-    rightmost = ordered[-1]
-    print(f"split {rightmost} right --ratio {share:.6f}")
-    for pane_id in ordered:
-        print(f"resize {pane_id} {share:.6f}")
-
+    # existing (left) child keeps (N-1)/N so the NEW pane is born at 1/N.
+    existing_child_ratio = (new_count - 1) / new_count
+    print(f"split {rightmost} right --ratio {existing_child_ratio:.6f}")
     return 0
 
 
