@@ -242,7 +242,7 @@ herdr pane run "$pane" "bash -lc 'tail -f /tmp/app.log'" || { echo "Error: launc
 
 ## Sending multi-line or code-heavy messages
 
-`herdr pane run <pane> <command>` takes one shell-quoted string. Nested quotes and newlines break easily.
+`herdr pane run <pane> <command>` takes one shell-quoted string. Nested quotes and newlines break easily. These patterns cover **escaping only** — run the fail-closed preflight (`scripts/preflight_send.py`, see "Delivery verification" in `references/delivery-and-waiting.md`) before any of them, so a task never lands in a working/blocked/unverifiable pane.
 
 **Pattern A — short instruction that reads a file:**
 
@@ -354,9 +354,11 @@ pane_status() {  # prints status, returns non-zero on lookup/parse failure
   out="$(herdr pane get "$1" 2>/dev/null)" || return 1
   printf '%s' "$out" | python3 -c '
 import sys, json
-try: pane = json.load(sys.stdin)["result"]["pane"]
+V={"idle","working","blocked","done","unknown"}
+try: r = json.load(sys.stdin)["result"]["pane"].get("agent_status")
 except Exception: sys.exit(1)
-print(pane.get("agent_status") or "unknown")'
+# Off-enum values (numeric, garbage, empty) are unverifiable, NOT "unknown".
+print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))'
 }
 ready_panes=(); ready_labels=(); skipped_any=0
 for i in "${!panes[@]}"; do

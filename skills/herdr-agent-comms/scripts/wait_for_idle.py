@@ -106,10 +106,35 @@ def resolve_pane(target: str) -> str:
 # genuine "unknown" (non-integrated CLI) still uses the content-stability path.
 LOOKUP_FAILED = "\x00lookup-failed"
 
+# The documented agent-status enum. ANY other value — a number, an empty
+# string, a typo, an out-of-band string the server invents — is unverifiable,
+# NOT a benign "unknown". Accepting arbitrary truthy values fails open: a
+# numeric `123` status would sail past the working/blocked checks and be
+# treated as sendable/settled. Absent/null still maps to "unknown" (the
+# non-integrated-CLI case); everything off-enum maps to LOOKUP_FAILED so it is
+# rejected on --ready and routed to content-stability (which needs real work
+# before it settles) on a normal wait.
+VALID_STATUSES = frozenset({"idle", "working", "blocked", "done", "unknown"})
+
+
+def normalize_status(raw: object) -> str:
+    """Map a raw agent_status value onto the documented enum.
+
+    absent/null   -> "unknown"        (verifiable; non-integrated CLI)
+    in the enum   -> that status
+    anything else -> LOOKUP_FAILED    (wrong type, empty string, off-enum)
+    """
+    if raw is None:
+        return "unknown"
+    if isinstance(raw, str) and raw in VALID_STATUSES:
+        return raw
+    return LOOKUP_FAILED
+
 
 def agent_status(pane_id: str) -> str:
-    """Return the pane's agent status, "unknown" if validly absent, or
-    LOOKUP_FAILED if the `herdr pane get` call failed / didn't parse."""
+    """Return the pane's agent status (a member of VALID_STATUSES), or
+    LOOKUP_FAILED if the `herdr pane get` call failed, didn't parse, or
+    reported a value outside the documented enum."""
     cp = run(["herdr", "pane", "get", pane_id])
     if cp.returncode != 0:
         return LOOKUP_FAILED
@@ -117,7 +142,7 @@ def agent_status(pane_id: str) -> str:
         pane = json.loads(cp.stdout)["result"]["pane"]
     except (json.JSONDecodeError, KeyError):
         return LOOKUP_FAILED
-    return pane.get("agent_status") or "unknown"
+    return normalize_status(pane.get("agent_status"))
 
 
 def _unverifiable(st: str, args) -> bool:

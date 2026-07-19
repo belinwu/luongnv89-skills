@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.13.0
+  version: 1.14.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -245,6 +245,21 @@ If the name is missing, list agents and surface the closest match — don't sile
 Capture the transcript **before sending**. This lets Phase 5 recognize a fast reply even if the agent finishes before the waiter starts:
 
 ```bash
+# Resolve the scripts dir if not already set (Phase 4 can be reached directly).
+if [ -z "${here:-}" ]; then
+  for cand in "skills/herdr-agent-comms/scripts" ".agents/skills/herdr-agent-comms/scripts" \
+    ".claude/skills/herdr-agent-comms/scripts" "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+    "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+    [ -f "$cand/preflight_send.py" ] && { here="$cand"; break; }
+  done
+fi
+# FAIL-CLOSED preflight — same enum-validated check broadcast.sh runs. Refuse to
+# send into a working (rc 2), blocked (rc 3), or unverifiable/off-enum (rc 4)
+# pane; only idle/done/unknown (rc 0) is safe. Skipping this let a task be typed
+# into a blocked trust dialog and still report success.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id is not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
+
 baseline_file="$(mktemp)"
 herdr pane read "$pane_id" --source recent-unwrapped --lines 80 >"$baseline_file" \
   || { echo "Error: could not capture baseline for $pane_id" >&2; exit 1; }
@@ -284,28 +299,25 @@ else
 fi
 ```
 
-`NOT-DELIVERED` → lone Enter via `herdr pane send-keys "$pane_id" enter`, re-check; if still idle with no new output, re-send. A transcript change proves delivery activity, but may be only the echoed prompt; do **not** submit an extra Enter. The split completion marker lets Phase 5 distinguish echo from a finished reply.
+`NOT-DELIVERED` → **re-run the preflight first**, then a lone Enter via `herdr pane send-keys "$pane_id" enter`; if still idle with no new output, re-send. Never send the Enter blind: the send may have flipped the pane into a `blocked` dialog (the input triggered a trust/permission prompt), and a bare Enter would answer *that* dialog, not deliver the task.
+
+```bash
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe for recovery Enter (blocked/working/unverifiable) — see stderr" >&2; exit 1; }
+herdr pane send-keys "$pane_id" enter
+```
+
+A transcript change proves delivery activity, but may be only the echoed prompt; do **not** submit an extra Enter. The split completion marker lets Phase 5 distinguish echo from a finished reply.
 
 ## Phase 5: Wait for the Reply, Then Read It
 
 Use Herdr status waits (not fixed `sleep`). Completion may be **`done`** (unseen, usually background) **or `idle`** (seen / focused tab) — wait for either. Prefer the helper with the Phase 4 pre-send baseline; without it, a fast agent can finish before the waiter snapshots the pane and leave the root waiting until timeout:
 
 ```bash
-# $here is the scripts/ dir. If Phase 2 already resolved it, reuse it;
-# jumping straight here (e.g. "message an agent that's already running")
-# skips Phase 2, so probe install locations again rather than assume it's set.
-# Repo-local copies win over global installs (see Phase 2a).
-if [ -z "${here:-}" ]; then
-  for cand in \
-    "skills/herdr-agent-comms/scripts" \
-    ".agents/skills/herdr-agent-comms/scripts" \
-    ".claude/skills/herdr-agent-comms/scripts" \
-    "$HOME/.claude/skills/herdr-agent-comms/scripts" \
-    "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
-    if [ -f "$cand/wait_for_idle.py" ]; then here="$cand"; break; fi
-  done
-fi
-[ -n "${here:-}" ] || { echo "Error: wait_for_idle.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
+# $here is the scripts/ dir. Phase 4 resolved it; if you jumped straight here
+# (messaging an already-running agent), the Phase 4 resolver block above finds
+# it (repo-local copies win over global installs — see Phase 2a).
+[ -n "${here:-}" ] || { echo "Error: wait_for_idle.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Resolve \$here (see Phase 4) before retrying." >&2; exit 1; }
 python3 "$here/wait_for_idle.py" "$pane_id" --timeout 180 --lines 80 \
   --baseline-file "$baseline_file" --completion-marker "$completion_marker"
 rc=$?; rm -f "$baseline_file"   # capture rc BEFORE cleanup ($? = rm's otherwise)
@@ -313,28 +325,7 @@ rc=$?; rm -f "$baseline_file"   # capture rc BEFORE cleanup ($? = rm's otherwise
 [ "$rc" -eq 0 ] || { echo "Error: wait for $pane_id did not complete (rc $rc)" >&2; exit "$rc"; }
 ```
 
-Manual fallback after delivery is verified:
-
-```bash
-# Poll until idle|done|blocked or budget spent. FAIL-CLOSED status read: a
-# failed/malformed `herdr pane get` exits with an error instead of falling
-# through to `sleep` as if the pane were merely `unknown`.
-deadline=$((SECONDS + 180))
-while (( SECONDS < deadline )); do
-  out=$(herdr pane get "$pane_id" 2>/dev/null) || { echo "Error: status lookup failed for $pane_id" >&2; exit 1; }
-  st=$(printf '%s' "$out" | python3 -c 'import sys,json
-try: print(json.load(sys.stdin)["result"]["pane"].get("agent_status") or "unknown")
-except Exception: sys.exit(1)') || { echo "Error: could not parse status for $pane_id" >&2; exit 1; }
-  case "$st" in
-    done|idle) echo "settled:$st"; break ;;
-    blocked) echo "blocked"; break ;;
-    working) herdr wait agent-status "$pane_id" --status done --timeout 15000 \
-               || herdr wait agent-status "$pane_id" --status idle --timeout 15000 || true ;;
-    *) sleep 2 ;;
-  esac
-done
-# Or use the helper instead (resolve $here first — see the block above).
-```
+**Manual fallback** (after delivery is verified) — poll `herdr pane get` until `idle|done|blocked` with a FAIL-CLOSED, enum-validated status read (a failed/malformed/off-enum `pane get` errors out instead of `sleep`ing as if merely `unknown`). Full copy-paste block in `references/delivery-and-waiting.md`.
 
 Treat **either `idle` or `done` as completed** — difference is only whether the result was seen. Never wait only on `done` for the full budget: a focused-tab finish stays `idle` and will time out.
 

@@ -209,6 +209,20 @@ class BroadcastDedupeTests(unittest.TestCase):
                          msg=f"malformed-status pane must not be sent to. stdout={cp.stdout!r}")
         self.assertNotEqual(cp.returncode, 0)
 
+    def test_offenum_numeric_status_is_rejected_not_sent(self):
+        """Regression (round 10, finding #1): a 0-exit `herdr pane get` that
+        reports an off-enum status VALUE (numeric 123) must be rejected as
+        unverifiable, NOT accepted as a truthy 'sendable' status. The old
+        `agent_status or "unknown"` let 123 fall into the idle/done/unknown
+        branch and the task was sent. fake_herdr passes the status straight
+        through json.dumps, so this injects a genuine numeric status."""
+        self.h.set_pane("bad1", 123, "off-enum numeric status\n", name="weird")
+        cp = self.h.run_broadcast("do the thing", ["weird"], timeout=4)
+        self.assertEqual(self.h.count_pane_run_invocations("bad1"), 0,
+                         msg=f"off-enum-status pane must not be sent to. stdout={cp.stdout!r}")
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("verify", cp.stderr.lower())
+
     def test_failed_status_lookup_skips_only_bad_target(self):
         """A verifiable idle pane alongside an unverifiable one: the good pane
         still gets the message; the bad one is skipped. AND the overall exit is

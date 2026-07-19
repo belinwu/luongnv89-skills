@@ -24,7 +24,17 @@ After `pane run` / send:
 2. If still `idle`/`done` with no new transcript lines → likely not submitted → lone `enter`, then re-check.
 3. If `blocked` → dialog ate focus; do not treat as delivered task.
 
+`$sd` below is the skill's `scripts/` dir (resolve it as SKILL.md Phase 4/5 do: probe repo-local then `.agents/`, `.claude/`, `$HOME`).
+
 ```bash
+# $sd = the skill's scripts/ dir. FAIL-CLOSED preflight before EVERY send —
+# the single-target twin of broadcast.sh Phase 1b. Refuse to type a task into a
+# working (rc 2), blocked (rc 3), or unverifiable/off-enum (rc 4) pane; only
+# idle/done/unknown (rc 0) is safe. Skipping this let a task be typed into a
+# blocked trust dialog and still report success.
+python3 "$sd/preflight_send.py" "$pane" >/dev/null \
+  || { echo "Error: $pane not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
+
 baseline="$(mktemp)"
 herdr pane read "$pane" --source recent-unwrapped --lines 80 >"$baseline" \
   || { echo "Error: baseline read failed for $pane" >&2; exit 1; }
@@ -46,6 +56,11 @@ else
   if ! cmp -s "$baseline" "$after"; then
     echo delivered-transcript-activity
   else
+    # Re-run the preflight before the recovery Enter: the send may have flipped
+    # the pane into a `blocked` dialog, and a bare Enter would answer THAT
+    # dialog, not deliver the task. Never send the Enter blind.
+    python3 "$sd/preflight_send.py" "$pane" >/dev/null \
+      || { echo "Error: $pane not safe for recovery Enter (blocked/working/unverifiable) — see stderr" >&2; rm -f "$after"; exit 1; }
     herdr pane send-keys "$pane" enter
     herdr wait agent-status "$pane" --status working --timeout 10000 || echo NOT-DELIVERED
   fi
@@ -97,8 +112,11 @@ deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
   out=$(herdr pane get "$pane" 2>/dev/null) || { echo "status lookup failed for $pane" >&2; exit 1; }
   st=$(printf '%s' "$out" | python3 -c 'import sys,json
-try: print(json.load(sys.stdin)["result"]["pane"].get("agent_status") or "unknown")
-except Exception: sys.exit(1)') || { echo "status parse failed for $pane" >&2; exit 1; }
+V={"idle","working","blocked","done","unknown"}
+try: r=json.load(sys.stdin)["result"]["pane"].get("agent_status")
+except Exception: sys.exit(1)
+print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))') \
+    || { echo "status parse failed / off-enum for $pane" >&2; exit 1; }
   case "$st" in
     done|idle) break ;;
     blocked) echo blocked; break ;;
@@ -151,7 +169,9 @@ The helper mirrors tmux-agent-comms' wait semantics (exit 0 idle / 2 timeout / 3
 
 ## Concurrent fleet waits
 
-Capture every baseline first, then send all, then wait concurrently. This order handles agents that finish before their waiter process starts:
+Capture every baseline first, then send all, then wait concurrently. This order handles agents that finish before their waiter process starts.
+
+**Precondition:** `$panes` here must already be the deduped, **preflighted** target set — every entry passed the fail-closed working/blocked/unverifiable check (as `scripts/broadcast.sh` Phase 1b and the manual fleet recipe in `references/herdr-recipes.md` build it). Don't `pane run` a raw target list; a working/blocked/off-enum pane would be sent into blind. Prefer `scripts/broadcast.sh`, which does all of this.
 
 ```bash
 tmpdir="$(mktemp -d)"
@@ -217,8 +237,10 @@ for p in "${panes[@]}"; do
       # as an empty status that falls through to `sleep`; exit as an error.
       out=$(herdr pane get "$p" 2>/dev/null) || exit 4
       st=$(printf '%s' "$out" | python3 -c 'import sys,json
-try: print(json.load(sys.stdin)["result"]["pane"].get("agent_status") or "unknown")
-except Exception: sys.exit(1)') || exit 4
+V={"idle","working","blocked","done","unknown"}
+try: r=json.load(sys.stdin)["result"]["pane"].get("agent_status")
+except Exception: sys.exit(1)
+print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))') || exit 4
       case "$st" in
         done|idle) exit 0 ;;
         blocked) exit 3 ;;

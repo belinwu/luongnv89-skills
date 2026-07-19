@@ -67,12 +67,19 @@ pane_status() {
   out="$(herdr pane get "$1" 2>/dev/null)" || return 1
   printf '%s' "$out" | python3 -c '
 import sys, json
+VALID = {"idle", "working", "blocked", "done", "unknown"}
 try:
     d = json.load(sys.stdin)
     pane = d["result"]["pane"]
 except Exception:
     sys.exit(1)   # lookup/parse failure — NOT a safe empty status
-print(pane.get("agent_status") or "unknown")
+raw = pane.get("agent_status")
+if raw is None:
+    print("unknown")                 # validly absent (non-integrated CLI)
+elif isinstance(raw, str) and raw in VALID:
+    print(raw)
+else:
+    sys.exit(1)                       # off-enum/garbage (e.g. numeric 123) — unverifiable
 '
 }
 

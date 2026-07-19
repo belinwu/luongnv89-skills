@@ -323,6 +323,36 @@ class WaitForIdleMarkerSemanticsTests(unittest.TestCase):
         )
         self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
 
+    def test_ready_numeric_status_is_unverifiable_not_ready(self):
+        """Regression (round 10, finding #1): an off-enum status VALUE (here a
+        numeric 123) must be treated as unverifiable, NOT as a benign truthy
+        status that sails through. Under --ready it must error (rc 1), never
+        report ready (rc 0). fake_herdr passes agent_status straight through
+        json.dumps, so this injects a real numeric status into `pane get`."""
+        self.h.set_pane("p1", 123, "some output\n")
+        cp = self.h.run_waiter(
+            "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "3"
+        )
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_ready_garbage_string_status_is_unverifiable_not_ready(self):
+        """Same fail-open hole via an out-of-enum STRING (a typo / server-invented
+        value): must be unverifiable (rc 1 under --ready), not accepted."""
+        self.h.set_pane("p1", "totally-bogus", "some output\n")
+        cp = self.h.run_waiter(
+            "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "3"
+        )
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_empty_string_status_is_unverifiable(self):
+        """An empty-string status is NOT a valid 'unknown' — the old `or
+        "unknown"` masked it. It's off-enum, so unverifiable (rc 1 --ready)."""
+        self.h.set_pane("p1", "", "some output\n")
+        cp = self.h.run_waiter(
+            "p1", "--ready", "--interval", "0.1", "--quiet-cycles", "2", "--timeout", "3"
+        )
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
     def test_no_marker_legacy_fallback_uses_saw_working(self):
         """Without a completion marker arranged, a genuine working->idle
         transition for THIS send is still accepted (legacy behavior)."""
