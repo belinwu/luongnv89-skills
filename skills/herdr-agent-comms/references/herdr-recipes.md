@@ -36,15 +36,19 @@ ws="${HERDR_WORKSPACE_ID:?}"
 project_dir=$(pwd)
 # Resolve scripts/ by probing known install locations. Don't derive from
 # $0/BASH_SOURCE here — unreliable when an agent runs this inline rather
-# than as a saved script file.
+# than as a saved script file. Repo-local copies win over global installs
+# so a pinned repo checkout isn't silently overridden by whatever version
+# happens to be installed globally.
 here=""
 for cand in \
-  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts" \
+  ".agents/skills/herdr-agent-comms/scripts" \
   ".claude/skills/herdr-agent-comms/scripts" \
-  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
-  "skills/herdr-agent-comms/scripts"; do
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
   if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
 done
+[ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 
 spawn_sub() {
   local name=$1 cmd=$2
@@ -180,27 +184,58 @@ Prefer `recent-unwrapped` for agent transcripts. Widen `--lines` stepwise if tru
 
 ## Broadcast pattern (manual)
 
-Prefer `scripts/broadcast.sh`. Manual equivalent:
+Prefer `scripts/broadcast.sh` — it already resolves paths, dedupes, and rejects
+busy/blocked panes. The manual equivalent below exists for when the script is
+unavailable and must **replicate the same safeguards**, not skip them:
 
 ```bash
+# Repo-local copies win over global installs (see Phase 2a). Fail fast if
+# unresolved — do not silently continue with an empty $here.
 here=""
 for cand in \
-  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts" \
+  ".agents/skills/herdr-agent-comms/scripts" \
   ".claude/skills/herdr-agent-comms/scripts" \
-  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
-  "skills/herdr-agent-comms/scripts"; do
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
   if [ -f "$cand/wait_for_idle.py" ]; then here="$cand"; break; fi
 done
+[ -n "$here" ] || { echo "Error: wait_for_idle.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 
 targets=(reviewer tests docs)
 msg="Pull latest main and report branch + dirty state."
 
-# Resolve names → pane ids once, then single pane run each
-panes=()
+# Resolve names → pane ids, deduping so a name and its own pane-id alias
+# (e.g. "reviewer" and "w26:p4") don't double-send.
+panes=(); labels=()
 for t in "${targets[@]}"; do
   p=$(herdr agent get "$t" | python3 -c 'import sys,json; d=json.load(sys.stdin); a=d.get("result",{}).get("agent") or d.get("result",{}); print(a["pane_id"])')
-  panes+=("$p")
+  [ -n "$p" ] || { echo "Error: target '$t' does not resolve — herdr agent list" >&2; exit 1; }
+  dup=""
+  for existing in "${panes[@]+"${panes[@]}"}"; do
+    [ "$existing" = "$p" ] && { dup=1; break; }
+  done
+  if [ -n "$dup" ]; then
+    echo "Note: '$t' resolves to an already-targeted pane $p — skipping duplicate." >&2
+    continue
+  fi
+  panes+=("$p"); labels+=("$t")
 done
+
+# Preflight: reject panes that are `working` (busy with unrelated prior work)
+# or `blocked` (trust/auth dialog — typing into it submits garbage, not a
+# task). Matches scripts/broadcast.sh Phase 1b.
+ready_panes=(); ready_labels=()
+for i in "${!panes[@]}"; do
+  st=$(herdr pane get "${panes[$i]}" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"].get("agent_status",""))')
+  case "$st" in
+    working) echo "Error: '${labels[$i]}' (${panes[$i]}) is already working — skipped." >&2; continue ;;
+    blocked) echo "Error: '${labels[$i]}' (${panes[$i]}) is blocked (trust/auth dialog) — skipped." >&2; continue ;;
+  esac
+  ready_panes+=("${panes[$i]}"); ready_labels+=("${labels[$i]}")
+done
+panes=("${ready_panes[@]+"${ready_panes[@]}"}"); labels=("${ready_labels[@]+"${ready_labels[@]}"}")
+[ "${#panes[@]}" -gt 0 ] || { echo "Error: no targets left to send to." >&2; exit 1; }
 
 tmpdir="$(mktemp -d)"
 markers=(); tasks=()
@@ -224,7 +259,7 @@ wait
 rm -rf "$tmpdir"
 ```
 
-Do **not** `agent send` and then `pane run` the same message (double submit). Do **not** wait only on `done` for the full budget when the tab is focused — agents often settle as `idle` (use `wait_for_idle.py` or idle|done polling).
+Do **not** `agent send` and then `pane run` the same message (double submit). Do **not** wait only on `done` for the full budget when the tab is focused — agents often settle as `idle` (use `wait_for_idle.py` or idle|done polling). Do **not** drop the dedupe or busy/blocked preflight from this manual path — that would reintroduce double-sends and dialog-clobbering that `scripts/broadcast.sh` exists to prevent.
 
 ## Troubleshooting
 

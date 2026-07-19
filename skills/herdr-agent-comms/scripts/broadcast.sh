@@ -100,12 +100,16 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
-# Phase 1b: reject panes already busy with other work before we send — a pane
-# that is already `working` did not start working because of THIS broadcast,
-# so waiting on it afterward cannot reliably distinguish this send's
-# completion from the prior task's. Skip busy panes rather than risk a false
-# "settled" report.
+# Phase 1b: reject panes that aren't safely sendable before we send.
+# - `working`: did not start working because of THIS broadcast, so waiting on
+#   it afterward cannot reliably distinguish this send's completion from the
+#   prior task's.
+# - `blocked`: a trust/auth/permission dialog is on screen. Typing the task
+#   into that dialog would submit garbage to the prompt, not the agent — skip
+#   it and surface the dialog instead (Critical Rule 7 in SKILL.md).
+# Skip both rather than risk a false "settled" report or a swallowed dialog.
 busy=()
+blocked=()
 ready_panes=()
 ready_labels=()
 for i in "${!panes[@]}"; do
@@ -114,12 +118,20 @@ for i in "${!panes[@]}"; do
     busy+=("${labels[$i]} (${panes[$i]})")
     continue
   fi
+  if [ "$st" = "blocked" ]; then
+    blocked+=("${labels[$i]} (${panes[$i]})")
+    continue
+  fi
   ready_panes+=("${panes[$i]}")
   ready_labels+=("${labels[$i]}")
 done
 if [ "${#busy[@]}" -gt 0 ]; then
   echo "Error: these targets are already working and were skipped: ${busy[*]}" >&2
   echo "Wait for them to go idle/done first, or target only the idle agents." >&2
+fi
+if [ "${#blocked[@]}" -gt 0 ]; then
+  echo "Error: these targets are blocked (trust/auth dialog) and were skipped: ${blocked[*]}" >&2
+  echo "A human must answer the dialog first — see: herdr agent focus <name>." >&2
 fi
 panes=("${ready_panes[@]+"${ready_panes[@]}"}")
 labels=("${ready_labels[@]+"${ready_labels[@]}"}")
@@ -142,24 +154,38 @@ done
 
 # Phase 3: fan out. The full marker is deliberately absent from the prompt:
 # prompt echo contains its two halves; only the completed reply joins them.
+#
+# A failed `pane run` here must NOT abort the whole broadcast: panes sent
+# to earlier in this loop are already mid-task, and abandoning them without
+# a wait/report would silently drop results the caller has no way to
+# recover. Record the failure and keep going; only successfully-dispatched
+# panes proceed to Phase 4.
 markers=()
+send_failed=()
 for i in "${!panes[@]}"; do
   p="${panes[$i]}"
   suffix="$(date +%s)_$$_${i}_${RANDOM}"
-  markers+=("HERDR_DONE_$suffix")
+  markers[$i]="HERDR_DONE_$suffix"
   task="$msg
 
 After fully finishing the task, concatenate and print these two parts without spaces: HERDR_DONE_ and $suffix"
-  herdr pane run "$p" "$task" >/dev/null || {
-    echo "Error: pane run failed for $p" >&2
-    exit 1
-  }
+  if ! herdr pane run "$p" "$task" >/dev/null; then
+    echo "Error: pane run failed for ${labels[$i]} ($p) — dispatch stopped for this target, already-sent panes still awaited." >&2
+    send_failed+=("$i")
+  fi
 done
 
-# Phase 4: wait concurrently
+# Phase 4: wait concurrently, but only on panes the send actually reached.
 pids=()
+wait_indices=()
 for i in "${!panes[@]}"; do
+  skip=""
+  for f in "${send_failed[@]+"${send_failed[@]}"}"; do
+    [ "$f" = "$i" ] && { skip=1; break; }
+  done
+  [ -n "$skip" ] && continue
   p="${panes[$i]}"
+  wait_indices+=("$i")
   # shellcheck disable=SC2086
   (
     python3 "$waiter" "$p" --timeout "$timeout" ${HAC_WAIT_ARGS:-} \
@@ -170,14 +196,15 @@ for i in "${!panes[@]}"; do
   ) &
   pids+=("$!")
 done
-for pid in "${pids[@]}"; do wait "$pid"; done
+for pid in "${pids[@]+"${pids[@]}"}"; do wait "$pid"; done
 
-# Phase 5: emit labeled blocks
+# Phase 5: emit labeled blocks — dispatched panes first (settled/timeout/
+# blocked/error), then a distinct block per pane that never got a send.
 overall=0
-if [ "${#busy[@]}" -gt 0 ]; then
+if [ "${#busy[@]}" -gt 0 ] || [ "${#blocked[@]}" -gt 0 ] || [ "${#send_failed[@]}" -gt 0 ]; then
   overall=1
 fi
-for i in "${!panes[@]}"; do
+for i in "${wait_indices[@]+"${wait_indices[@]}"}"; do
   label="${labels[$i]}"
   p="${panes[$i]}"
   code="$(cat "$tmpdir/$i.code" 2>/dev/null || echo "?")"
@@ -194,5 +221,12 @@ for i in "${!panes[@]}"; do
   fi
   echo
 done
+for i in "${send_failed[@]+"${send_failed[@]}"}"; do
+  echo "===== ${labels[$i]} (${panes[$i]}) [SEND-FAILED, not waited] =====" >&2
+done
+
+if [ "${#send_failed[@]}" -gt 0 ]; then
+  echo "Partial results: ${#send_failed[@]} of ${#panes[@]} target(s) never received the message (see SEND-FAILED above). Results above are only for targets successfully dispatched." >&2
+fi
 
 exit "$overall"

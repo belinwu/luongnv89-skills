@@ -57,13 +57,16 @@ Orchestrator pattern — **accept either terminal state**; do not spend the whol
 
 ```bash
 # Preferred helper. The pre-send baseline closes the fast-completion race.
-# $here = scripts/ dir; probe install locations, don't derive from $0/BASH_SOURCE:
-#   for cand in "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+# $here = scripts/ dir; probe install locations, don't derive from $0/BASH_SOURCE.
+# Repo-local copies win over global installs; fail fast if none resolve:
+#   for cand in "skills/herdr-agent-comms/scripts" \
+#               ".agents/skills/herdr-agent-comms/scripts" \
 #               ".claude/skills/herdr-agent-comms/scripts" \
-#               "$HOME/.agents/skills/herdr-agent-comms/scripts" \
-#               "skills/herdr-agent-comms/scripts"; do
+#               "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+#               "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
 #     [ -f "$cand/wait_for_idle.py" ] && here="$cand" && break
 #   done
+#   [ -n "$here" ] || { echo "Error: wait_for_idle.py not found" >&2; exit 1; }
 python3 "$here/wait_for_idle.py" "$pane" --timeout 180 --lines 80 \
   --baseline-file "$baseline" --completion-marker "$completion_marker"
 rc=$?

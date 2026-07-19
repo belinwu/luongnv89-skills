@@ -7,7 +7,10 @@ State lives in a JSON file at $FAKE_HERDR_STATE, shaped:
     "<pane_id>": {
       "agent_status": "idle|working|done|blocked|unknown",
       "text": "<current transcript>",
-      "name": "<agent name or null>"
+      "name": "<agent name or null>",
+      "fail_run": true  # optional: "pane run" on this pane returns exit 1
+                        # without mutating state, to simulate a dispatch
+                        # failure partway through a broadcast fan-out.
     }
   }
 }
@@ -121,6 +124,9 @@ def cmd_pane_run(args):
     pid = find_pane_by_id(state, args[0])
     text = args[1] if len(args) > 1 else ""
     if pid is not None:
+        if state["panes"][pid].get("fail_run"):
+            print(json.dumps({"error": "simulated pane run failure"}), file=sys.stderr)
+            return 1
         state["panes"][pid]["agent_status"] = "working"
         state["panes"][pid]["text"] += f"\n$ {text}\n"
         save_state(state)

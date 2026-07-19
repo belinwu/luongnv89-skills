@@ -4,7 +4,9 @@
 Covers:
   P2.6 - name+pane aliases resolving to the same pane must not double-send.
   P1.1 - a pane already `working` before the broadcast must be rejected,
-         not silently waited on as if this broadcast made it busy.
+         not silently waited on as if this broadcast made it busy. A pane
+         that is `blocked` (trust/auth dialog) must be rejected too — typing
+         a task into that dialog would submit garbage, not reach the agent.
 
 Run directly (stdlib unittest only):
     python3 -m unittest discover -s skills/herdr-agent-comms/tests -p 'test_*.py'
@@ -45,9 +47,14 @@ class FakeHerdrHarness:
         with open(self.state_path, encoding="utf-8") as f:
             return json.load(f)
 
-    def set_pane(self, pane_id, status, text, name=None):
+    def set_pane(self, pane_id, status, text, name=None, fail_run=False):
         state = self.read_state()
-        state["panes"][pane_id] = {"agent_status": status, "text": text, "name": name}
+        state["panes"][pane_id] = {
+            "agent_status": status,
+            "text": text,
+            "name": name,
+            "fail_run": fail_run,
+        }
         self.write_state(state)
 
     def set_status(self, pane_id, status):
@@ -140,6 +147,109 @@ class BroadcastDedupeTests(unittest.TestCase):
         cp = self.h.run_broadcast("do the thing", ["busy"], timeout=4)
         self.assertNotEqual(cp.returncode, 0)
         self.assertEqual(self.h.count_pane_run_invocations("busy1"), 0)
+
+    def test_blocked_pane_is_rejected_not_sent(self):
+        """P1.1: a pane showing `blocked` (trust/auth dialog) must be
+        skipped, never sent to — typing a task into the dialog would submit
+        garbage to the prompt, not reach the agent."""
+        self.h.set_pane("dlg1", "blocked", "Do you trust this workspace? [y/n]\n", name="gated")
+        self.h.set_pane("idle1", "idle", "ready\n", name="ready")
+
+        def finish_ready():
+            time.sleep(0.2)
+            st = self.h.read_state()
+            sent_text = st["panes"]["idle1"]["text"]
+            m = re.search(r"HERDR_DONE_ and (\S+)", sent_text)
+            if m:
+                self.h.append_text("idle1", f"HERDR_DONE_{m.group(1)}\n")
+            self.h.set_status("idle1", "idle")
+
+        t = threading.Thread(target=finish_ready)
+        t.start()
+        cp = self.h.run_broadcast("do the thing", ["gated", "ready"], timeout=6)
+        t.join()
+
+        # blocked pane must never have received a pane run (no new "$ " line)
+        blocked_sends = self.h.count_pane_run_invocations("dlg1")
+        self.assertEqual(blocked_sends, 0, msg=f"blocked pane should not be sent to. stdout={cp.stdout!r}")
+        self.assertIn("blocked", cp.stderr.lower())
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("ready", cp.stdout)
+
+    def test_all_blocked_exits_error_with_nothing_sent(self):
+        self.h.set_pane("dlg1", "blocked", "trust dialog\n", name="gated")
+        cp = self.h.run_broadcast("do the thing", ["gated"], timeout=4)
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertEqual(self.h.count_pane_run_invocations("dlg1"), 0)
+
+
+class BroadcastPartialFailureTests(unittest.TestCase):
+    """P2.1: if a later pane's `pane run` fails mid fan-out, panes already
+    dispatched must still be waited on and reported, not silently abandoned.
+    """
+
+    def setUp(self):
+        self.h = FakeHerdrHarness()
+
+    def test_later_send_failure_does_not_abandon_earlier_dispatch(self):
+        self.h.set_pane("ok1", "idle", "ready\n", name="first")
+        self.h.set_pane("bad1", "idle", "ready\n", name="second", fail_run=True)
+
+        def finish_first():
+            # Poll for the send (not a fixed sleep): preflight/baseline work
+            # ahead of Phase 3 dispatch means the exact send timing isn't
+            # fixed, so wait for the marker to actually appear in the task
+            # text before echoing the reply.
+            deadline = time.time() + 5
+            m = None
+            while time.time() < deadline and m is None:
+                sent_text = self.h.read_state()["panes"]["ok1"]["text"]
+                m = re.search(r"HERDR_DONE_ and (\S+)", sent_text)
+                if m is None:
+                    time.sleep(0.02)
+            if m:
+                self.h.append_text("ok1", f"HERDR_DONE_{m.group(1)}\n")
+            self.h.set_status("ok1", "idle")
+
+        t = threading.Thread(target=finish_first)
+        t.start()
+        cp = self.h.run_broadcast("do the thing", ["first", "second"], timeout=6)
+        t.join()
+
+        # The first pane was sent to and must still be waited on / reported.
+        self.assertEqual(self.h.count_pane_run_invocations("ok1"), 1)
+        self.assertIn("first", cp.stdout)
+        self.assertIn("idle/done", cp.stdout)
+        # The second pane's send failed and must be surfaced, not silently dropped.
+        self.assertIn("send-failed", cp.stderr.lower())
+        self.assertIn("partial results", cp.stderr.lower())
+        self.assertNotEqual(cp.returncode, 0)
+
+    def test_first_send_failure_still_waits_on_later_dispatched_panes(self):
+        self.h.set_pane("bad1", "idle", "ready\n", name="first", fail_run=True)
+        self.h.set_pane("ok1", "idle", "ready\n", name="second")
+
+        def finish_second():
+            deadline = time.time() + 5
+            m = None
+            while time.time() < deadline and m is None:
+                sent_text = self.h.read_state()["panes"]["ok1"]["text"]
+                m = re.search(r"HERDR_DONE_ and (\S+)", sent_text)
+                if m is None:
+                    time.sleep(0.02)
+            if m:
+                self.h.append_text("ok1", f"HERDR_DONE_{m.group(1)}\n")
+            self.h.set_status("ok1", "idle")
+
+        t = threading.Thread(target=finish_second)
+        t.start()
+        cp = self.h.run_broadcast("do the thing", ["first", "second"], timeout=6)
+        t.join()
+
+        self.assertEqual(self.h.count_pane_run_invocations("ok1"), 1)
+        self.assertIn("second", cp.stdout)
+        self.assertIn("idle/done", cp.stdout)
+        self.assertNotEqual(cp.returncode, 0)
 
 
 if __name__ == "__main__":

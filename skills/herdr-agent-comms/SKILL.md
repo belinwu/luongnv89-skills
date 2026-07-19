@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.4.0
+  version: 1.5.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -122,16 +122,19 @@ root_pane="$HERDR_PANE_ID"     # from Phase 1
 
 # Resolve scripts/ robustly: $0 is unreliable when an agent runs this inline
 # (it points at the shell, not the skill), so probe known install locations
-# instead of deriving from $0.
+# instead of deriving from $0. Repo-local copies win over global installs so
+# a repo checked out at a pinned commit isn't silently overridden by
+# whatever version happens to be installed globally.
 here=""
 for cand in \
-  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts" \
+  ".agents/skills/herdr-agent-comms/scripts" \
   ".claude/skills/herdr-agent-comms/scripts" \
-  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
-  "skills/herdr-agent-comms/scripts"; do
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
   if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
 done
-[ -n "$here" ] || { echo "next_grid_split.py not found — set \$here manually" >&2; }
+[ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 name=reviewer
 agent_cmd='pi --thinking medium'
 # optional skills for pi:  --skill /path/to/SKILL.md
@@ -276,15 +279,18 @@ Use Herdr status waits (not fixed `sleep`). Completion may be **`done`** (unseen
 # $here is the scripts/ dir. If Phase 2 already resolved it, reuse it;
 # jumping straight here (e.g. "message an agent that's already running")
 # skips Phase 2, so probe install locations again rather than assume it's set.
+# Repo-local copies win over global installs (see Phase 2a).
 if [ -z "${here:-}" ]; then
   for cand in \
-    "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+    "skills/herdr-agent-comms/scripts" \
+    ".agents/skills/herdr-agent-comms/scripts" \
     ".claude/skills/herdr-agent-comms/scripts" \
-    "$HOME/.agents/skills/herdr-agent-comms/scripts" \
-    "skills/herdr-agent-comms/scripts"; do
+    "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+    "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
     if [ -f "$cand/wait_for_idle.py" ]; then here="$cand"; break; fi
   done
 fi
+[ -n "${here:-}" ] || { echo "Error: wait_for_idle.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 python3 "$here/wait_for_idle.py" "$pane_id" --timeout 180 --lines 80 \
   --baseline-file "$baseline_file" --completion-marker "$completion_marker"
 rc=$?
@@ -383,14 +389,17 @@ project_dir="$(pwd)"
 
 # Resolve scripts/ by probing known install locations (not $0 — unreliable
 # when this snippet runs inline rather than as a saved script file).
+# Repo-local copies win over global installs (see Phase 2a).
 here=""
 for cand in \
-  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "skills/herdr-agent-comms/scripts" \
+  ".agents/skills/herdr-agent-comms/scripts" \
   ".claude/skills/herdr-agent-comms/scripts" \
-  "$HOME/.agents/skills/herdr-agent-comms/scripts" \
-  "skills/herdr-agent-comms/scripts"; do
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
   if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
 done
+[ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 spawn_sub() {
   local name="$1" cmd="$2"
   local split_from dir split_json pane
