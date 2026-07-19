@@ -29,6 +29,7 @@ from next_grid_split import (  # noqa: E402
     equal_targets,
     plan_next_split,
     split_ratio,
+    validate_single_row,
 )
 
 
@@ -37,6 +38,25 @@ def panes(*rects):
         {"pane_id": pid, "rect": {"x": x, "width": w}}
         for pid, x, w in rects
     ]
+
+
+def full_rect_layout(area, *rects):
+    """Layout with full x/y/width/height rects, for validate_single_row.
+
+    `area` is (x, y, width, height); each rect is (pid, x, y, width, height).
+    """
+    ax, ay, aw, ah = area
+    return {
+        "result": {
+            "layout": {
+                "area": {"x": ax, "y": ay, "width": aw, "height": ah},
+                "panes": [
+                    {"pane_id": pid, "rect": {"x": x, "y": y, "width": w, "height": h}}
+                    for pid, x, y, w, h in rects
+                ],
+            }
+        }
+    }
 
 
 class PlanNextSplitTests(unittest.TestCase):
@@ -172,6 +192,106 @@ class AreaWidthTests(unittest.TestCase):
     def test_falls_back_to_summed_widths(self):
         data = {"layout": {"panes": panes(("a", 0, 100), ("b", 100, 110))}}
         self.assertEqual(area_width_from_layout(data), 210)
+
+
+class ValidateSingleRowTests(unittest.TestCase):
+    """Reject 2D / stacked layouts before any split or equalize (P3 round 5).
+    Area = (x, y, w, h); panes carry full x/y/w/h rects."""
+
+    AREA = (0, 0, 210, 55)
+
+    def test_valid_single_row_passes(self):
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 105, 55),
+            ("b", 105, 0, 105, 55),
+        )
+        validate_single_row(layout)  # must not raise
+
+    def test_valid_three_columns_passes(self):
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 70, 55),
+            ("b", 70, 0, 70, 55),
+            ("c", 140, 0, 70, 55),
+        )
+        validate_single_row(layout)
+
+    def test_stacked_panes_sharing_x_are_rejected(self):
+        # b and c share x=105 but are stacked vertically (half height each) —
+        # the column model would double-count them. Must reject.
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 105, 55),
+            ("b", 105, 0, 105, 27),
+            ("c", 105, 27, 105, 28),
+        )
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
+
+    def test_partial_height_pane_is_rejected(self):
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 105, 55),
+            ("b", 105, 0, 105, 30),  # not full height
+        )
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
+
+    def test_top_offset_pane_is_rejected(self):
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 105, 55),
+            ("b", 105, 5, 105, 50),  # not top-aligned with area
+        )
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
+
+    def test_gap_between_columns_is_rejected(self):
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 100, 55),
+            ("b", 110, 0, 100, 55),  # gap from 100..110
+        )
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
+
+    def test_overlapping_columns_are_rejected(self):
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 110, 55),
+            ("b", 100, 0, 110, 55),  # overlaps a from 100..110
+        )
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
+
+    def test_columns_not_filling_width_are_rejected(self):
+        layout = full_rect_layout(
+            self.AREA,
+            ("a", 0, 0, 70, 55),
+            ("b", 70, 0, 70, 55),  # spans to 140, area ends at 210
+        )
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
+
+    def test_missing_area_rect_is_rejected(self):
+        layout = {"result": {"layout": {"panes": panes(("a", 0, 210))}}}
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
+
+    def test_pane_missing_yheight_is_rejected(self):
+        # A pane rect with only x/width (the old shape) can't be validated as
+        # a full-height column — must reject rather than assume.
+        layout = {
+            "result": {
+                "layout": {
+                    "area": {"x": 0, "y": 0, "width": 210, "height": 55},
+                    "panes": [{"pane_id": "a", "rect": {"x": 0, "width": 210}}],
+                }
+            }
+        }
+        with self.assertRaises(SystemExit):
+            validate_single_row(layout)
 
 
 class EqualizerConvergenceTests(unittest.TestCase):

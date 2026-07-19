@@ -55,25 +55,42 @@ for cand in \
 done
 [ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 
+# Canonical guarded spawn: every critical step is checked, the pane id is
+# printed ONLY after a successful launch + readiness, and any failure returns
+# non-zero (naming the orphan split pane) so the caller can abort. Note the
+# `local` declarations are separate from the assignments — `local pane=$(...)`
+# would mask the substitution's exit status.
 spawn_sub() {
   local name=$1 cmd=$2
   local plan split_from ratio j pane
   herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
   # plan line: "split <rightmost> right --ratio <1/N>" (new right pane -> 1/N target)
-  plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
+  plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane") || {
+    echo "Error: planning split failed for '$name' (bad/unsupported layout?)." >&2; return 1; }
   read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
-  j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)
-  pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')
+  [ -n "$split_from" ] && [ -n "$ratio" ] || {
+    echo "Error: empty plan for '$name'; refusing to split." >&2; return 1; }
+  j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus) || {
+    echo "Error: 'herdr pane split $split_from' failed for '$name'." >&2; return 1; }
+  pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])') || {
+    echo "Error: could not parse pane id from split output for '$name'." >&2; return 1; }
+  [ -n "$pane" ] || { echo "Error: empty pane id for '$name'." >&2; return 1; }
   # Equalize all columns — HARD GATE: on failure return non-zero WITHOUT
   # launching or printing a pane id, so the caller aborts (no `|| true`).
   if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >&2; then
-    echo "Error: equalize failed for '$name'; orphan split pane $pane not launched. Inspect 'herdr pane layout --pane $root_pane'." >&2
+    echo "Error: equalize failed for '$name'; orphan split pane $pane not launched. 'herdr pane close $pane' to undo." >&2
     return 1
   fi
-  herdr pane rename "$pane" "$name" >/dev/null
-  herdr agent rename "$pane" "$name" >/dev/null
-  herdr pane run "$pane" "$cmd" >/dev/null
-  printf '%s\n' "$pane"
+  herdr pane rename "$pane" "$name" >/dev/null || { echo "Error: rename failed; orphan $pane." >&2; return 1; }
+  herdr agent rename "$pane" "$name" >/dev/null || { echo "Error: agent rename failed; orphan $pane." >&2; return 1; }
+  herdr pane run "$pane" "$cmd" >/dev/null || { echo "Error: launch failed; orphan $pane." >&2; return 1; }
+  # Readiness: treat a boot timeout as failure so the caller doesn't message a
+  # dead pane. (Agents without status integration will time out here — the
+  # orphan is named so it's recoverable; drop this line if you rely on the
+  # content-stability fallback instead.)
+  herdr wait agent-status "$pane" --status idle --timeout 60000 >/dev/null || {
+    echo "Error: '$name' ($pane) not ready within 60s; orphan not confirmed launched." >&2; return 1; }
+  printf '%s\n' "$pane"   # ONLY after everything above succeeded
 }
 
 # Caller MUST check the status — `$(...)` hides spawn_sub's non-zero exit, so
@@ -181,10 +198,12 @@ done
 
 ```bash
 # $here from the resolver above (or re-probe if starting fresh in this shell)
-plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")
+plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane") || { echo "Error: split planning failed." >&2; exit 1; }
 read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
-j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)
-pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')
+[ -n "$split_from" ] && [ -n "$ratio" ] || { echo "Error: empty split plan." >&2; exit 1; }
+j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus) || { echo "Error: pane split failed." >&2; exit 1; }
+pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])') || { echo "Error: could not parse pane id." >&2; exit 1; }
+[ -n "$pane" ] || { echo "Error: empty pane id." >&2; exit 1; }
 # Equalize all columns — HARD GATE: abort (and close the orphan pane) rather
 # than run the log tail into an uneven layout.
 if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane"; then
@@ -192,8 +211,8 @@ if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane"; the
   herdr pane close "$pane" >/dev/null 2>&1 || true
   exit 1
 fi
-herdr pane rename "$pane" logs
-herdr pane run "$pane" "bash -lc 'tail -f /tmp/app.log'"
+herdr pane rename "$pane" logs || { echo "Error: rename failed; orphan $pane." >&2; exit 1; }
+herdr pane run "$pane" "bash -lc 'tail -f /tmp/app.log'" || { echo "Error: launch failed; orphan $pane." >&2; exit 1; }
 ```
 
 ## Sending multi-line or code-heavy messages

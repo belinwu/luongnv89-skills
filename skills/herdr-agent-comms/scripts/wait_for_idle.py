@@ -123,7 +123,14 @@ def extract_pane_text(out: str) -> str:
     return out
 
 
-def pane_read(pane_id: str, lines: int) -> str:
+def pane_read(pane_id: str, lines: int) -> str | None:
+    """Read a pane's transcript, or None if the read command FAILED.
+
+    A failed read (e.g. the pane disappeared mid-wait) must NOT be treated as
+    transcript content: the error text would stabilize like any other output
+    and trip a false "completion". Returning None lets callers propagate the
+    failure as an error/timeout instead of a spurious success.
+    """
     cp = run(
         [
             "herdr",
@@ -136,8 +143,9 @@ def pane_read(pane_id: str, lines: int) -> str:
             str(lines),
         ]
     )
-    out = cp.stdout or cp.stderr or ""
-    return extract_pane_text(out)
+    if cp.returncode != 0:
+        return None
+    return extract_pane_text(cp.stdout)
 
 
 def wait_status(pane_id: str, status: str, timeout_ms: int) -> bool:
@@ -227,13 +235,16 @@ def main() -> int:
             return 1
     else:
         baseline = pane_read(pane_id, args.lines)
+        if baseline is None:
+            print(f"Error: could not read pane {pane_id} for baseline", file=sys.stderr)
+            return 1
     saw_work = False  # working status or transcript change
     saw_working = False  # authoritative working transition
 
     st = agent_status(pane_id)
     if st == "blocked":
         if not args.no_print:
-            print_delta(baseline, pane_read(pane_id, args.lines), args.full)
+            print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
         return 3
 
     if args.ready and st in ("idle", "done") and args.prefer_status:
@@ -246,7 +257,7 @@ def main() -> int:
             st = agent_status(pane_id)
             if st == "blocked":
                 if not args.no_print:
-                    print_delta(baseline, pane_read(pane_id, args.lines), args.full)
+                    print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
                 return 3
 
             if st == "working":
@@ -269,6 +280,11 @@ def main() -> int:
 
             if st in ("idle", "done"):
                 cur = pane_read(pane_id, args.lines)
+                if cur is None:
+                    # Pane vanished while we were reading it — a failed read is
+                    # not a completed task. Report an error, not success.
+                    print(f"Error: pane {pane_id} read failed (pane gone?)", file=sys.stderr)
+                    return 1
                 if cur != baseline:
                     saw_work = True
                 marker_seen = (
@@ -305,7 +321,7 @@ def main() -> int:
                 # Also check blocked while waiting to start
                 if agent_status(pane_id) == "blocked":
                     if not args.no_print:
-                        print_delta(baseline, pane_read(pane_id, args.lines), args.full)
+                        print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
                     return 3
                 continue
 
@@ -328,6 +344,11 @@ def main() -> int:
             saw_work = True
             saw_working = True
         cur = pane_read(pane_id, args.lines)
+        if cur is None:
+            # Pane disappeared mid-wait — do NOT let a failed read stabilize
+            # into a false completion. Surface it as an error.
+            print(f"Error: pane {pane_id} read failed (pane gone?)", file=sys.stderr)
+            return 1
         if (
             args.completion_marker
             and args.completion_marker in cur

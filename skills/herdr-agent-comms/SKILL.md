@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.8.0
+  version: 1.9.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -143,23 +143,26 @@ herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
 
 # Plan line: "split <rightmost> right --ratio <1/N>". ratio=1/N so the new
 # right pane lands on the 1/N equal target (see "Equal-width columns" below).
-plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
+# Guard EVERY step — a failure anywhere must abort, not launch into a broken
+# or half-built layout. (The planner also rejects 2D/stacked layouts.)
+plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")" || { echo "Error: split planning failed (bad/unsupported layout?)." >&2; exit 1; }
 read -r _ split_from _dir _ratio_flag ratio < <(head -1 <<<"$plan")
-split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
-sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r.get("root_pane") or r)["pane_id"])')"
+[ -n "$split_from" ] && [ -n "$ratio" ] || { echo "Error: empty split plan; refusing to split." >&2; exit 1; }
+split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)" || { echo "Error: 'herdr pane split' failed." >&2; exit 1; }
+sub_pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r.get("root_pane") or r)["pane_id"])')" || { echo "Error: could not parse new pane id." >&2; exit 1; }
+[ -n "$sub_pane" ] || { echo "Error: empty new pane id." >&2; exit 1; }
 
-# Equalize every column to the same width (a split alone leaves pre-existing
-# columns wider than 1/N). HARD GATE: on failure (resize error or
-# non-convergence) do NOT launch into a broken layout — abort and name the
-# orphan split pane. Never swallow this with `|| true`.
+# Equalize every column (a split alone leaves pre-existing columns wider than
+# 1/N). HARD GATE: on failure (resize error or non-convergence) do NOT launch
+# into a broken layout — abort and name the orphan. Never swallow with `|| true`.
 if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane"; then
-  echo "Error: column equalization failed; NOT launching '$name'. Orphan split pane: $sub_pane. Inspect with 'herdr pane layout --pane $root_pane', then 'herdr pane close $sub_pane' to undo, or retry." >&2
+  echo "Error: equalization failed; NOT launching '$name'. Orphan split pane: $sub_pane ('herdr pane close $sub_pane' to undo)." >&2
   exit 1
 fi
 
-herdr pane rename "$sub_pane" "$name" >/dev/null
-herdr agent rename "$sub_pane" "$name" >/dev/null
-herdr pane run "$sub_pane" "$agent_cmd" >/dev/null
+herdr pane rename "$sub_pane" "$name" >/dev/null || { echo "Error: rename failed; orphan $sub_pane." >&2; exit 1; }
+herdr agent rename "$sub_pane" "$name" >/dev/null || { echo "Error: agent rename failed; orphan $sub_pane." >&2; exit 1; }
+herdr pane run "$sub_pane" "$agent_cmd" >/dev/null || { echo "Error: launch failed; orphan $sub_pane." >&2; exit 1; }
 ```
 
 **Second / third sub-agent** — identical: re-run the planner, split, then `--equalize` (the target share shrinks as columns are added, and the equalizer always converges to equal-within-1-cell). Just change `name` and `agent_cmd`.
@@ -404,37 +407,17 @@ for cand in \
   if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
 done
 [ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
-spawn_sub() {
-  local name="$1" cmd="$2"
-  local plan split_from ratio split_json pane
-  herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
-  # Plan line: "split <rightmost> right --ratio <1/N>" (new right pane lands on the 1/N target).
-  plan="$(python3 "$here/next_grid_split.py" --root-pane "$root_pane")"
-  read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
-  split_json="$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus)"
-  pane="$(printf '%s' "$split_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])')"
-  # Equalize all columns — a split alone leaves the pre-existing columns wide.
-  # HARD GATE: on failure, return non-zero WITHOUT launching or printing a
-  # pane id, so the caller aborts instead of spawning into a broken layout.
-  # (No `|| true` — that silently swallowed the failure.)
-  if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >&2; then
-    echo "Error: equalize failed for '$name'; orphan split pane $pane not launched. Inspect 'herdr pane layout --pane $root_pane' or 'herdr pane close $pane'." >&2
-    return 1
-  fi
-  herdr pane rename "$pane" "$name" >/dev/null
-  herdr agent rename "$pane" "$name" >/dev/null
-  herdr pane run "$pane" "$cmd" >/dev/null
-  herdr wait agent-status "$pane" --status idle --timeout 60000 >/dev/null
-  printf '%s\n' "$pane"
-}
 
-# Caller MUST check the exit status — `$(...)` swallows it otherwise:
-#   if ! p_reviewer="$(spawn_sub reviewer 'pi --thinking medium')"; then
-#     echo "aborting fleet spawn: reviewer failed to place" >&2; exit 1
-#   fi
+# PASTE the canonical, fully-guarded `spawn_sub` function definition from
+# references/herdr-recipes.md ("Spawn N sub-agents into an equal-width grid")
+# HERE before the calls below — this example calls it but does not redefine
+# it. That function guards planning, split, pane-id parse, equalize, rename,
+# launch, and readiness, prints the pane id ONLY after a confirmed launch, and
+# returns non-zero on any failure.
 
-p1="$(spawn_sub reviewer 'pi --thinking medium')"
-p2="$(spawn_sub tests 'pi --thinking low')"
+# Every caller MUST abort on non-zero — `$(...)` hides spawn_sub's exit status:
+p1="$(spawn_sub reviewer 'pi --thinking medium')" || { echo "reviewer failed to place; aborting" >&2; exit 1; }
+p2="$(spawn_sub tests 'pi --thinking low')" || { echo "tests failed to place; aborting" >&2; exit 1; }
 
 # Capture before send so even instant replies are observable.
 b1="$(mktemp)"; b2="$(mktemp)"

@@ -132,6 +132,74 @@ def area_width_from_layout(data: dict) -> float:
     return width
 
 
+def validate_single_row(data: dict, tolerance: int = 1) -> None:
+    """Reject layouts this script cannot safely treat as a row of columns.
+
+    The split/equalize model assumes every pane is a full-height column
+    tiling the tab left to right. A 2D layout (vertically stacked panes, or a
+    partial-height pane) breaks that: panes sharing an `x` would be counted as
+    separate columns, inflating the column total and making the "rightmost
+    column" split target ambiguous. This validates x/y/width/height BEFORE any
+    mutation and raises SystemExit on anything that isn't a single clean row.
+
+    Requires a real `area` rect (the summed-width fallback in
+    `area_width_from_layout` is unsafe here — stacked panes double-count).
+    """
+    layout = _unwrap_layout(data)
+    area = layout.get("area")
+    if not isinstance(area, dict):
+        raise SystemExit(
+            "layout has no 'area' rect; cannot validate a single-row column "
+            "grid (refusing to split/equalize a layout of unknown shape)"
+        )
+    try:
+        ax = float(area["x"]); ay = float(area["y"])
+        aw = float(area["width"]); ah = float(area["height"])
+    except (KeyError, TypeError, ValueError) as e:
+        raise SystemExit(f"layout 'area' rect missing x/y/width/height: {e}") from e
+
+    panes = panes_from_layout(data)
+    rects: list[tuple[float, float, float, float, str]] = []
+    for pane in panes:
+        pid = pane.get("pane_id")
+        rect = pane.get("rect")
+        if not isinstance(rect, dict):
+            raise SystemExit(f"pane {pid!r} has no rect; cannot validate layout shape")
+        try:
+            x = float(rect["x"]); y = float(rect["y"])
+            w = float(rect["width"]); h = float(rect["height"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise SystemExit(f"pane {pid!r} rect missing x/y/width/height: {e}") from e
+        rects.append((x, y, w, h, str(pid)))
+
+    # Every pane must be a full-height column, top-aligned with the area.
+    for x, y, w, h, pid in rects:
+        if abs(y - ay) > tolerance or abs(h - ah) > tolerance:
+            raise SystemExit(
+                f"pane {pid} is not a full-height column (y={y:g} h={h:g} vs "
+                f"area y={ay:g} h={ah:g}): this looks like a 2D / stacked "
+                f"layout, which this skill does not support. Rearrange to a "
+                f"single row of columns (or spawn agents in separate tabs)."
+            )
+
+    # Columns must tile left-to-right with no overlaps or gaps.
+    rects.sort(key=lambda t: t[0])
+    cursor = ax
+    for x, _y, w, _h, pid in rects:
+        if abs(x - cursor) > tolerance:
+            raise SystemExit(
+                f"column {pid} starts at x={x:g}, expected {cursor:g} — panes "
+                f"overlap or leave a gap; not a clean single row. Refusing to "
+                f"split/equalize."
+            )
+        cursor += w
+    if abs(cursor - (ax + aw)) > tolerance:
+        raise SystemExit(
+            f"columns span to x={cursor:g} but area ends at {ax + aw:g}; the "
+            f"row does not fill the tab width. Refusing to split/equalize."
+        )
+
+
 def _ordered_columns(panes: list[dict]) -> tuple[list[str], list[float]]:
     """Order panes by rect.x and return parallel (ids, widths) lists.
 
@@ -244,6 +312,10 @@ def equalize_live(root_pane: str | None) -> int:
     if not shutil.which("herdr"):
         raise SystemExit("herdr not on PATH")
 
+    # Reject 2D / stacked layouts BEFORE any resize — mutating a layout the
+    # column model misreads would scramble the panes.
+    validate_single_row(load_layout(root_pane, None))
+
     for _ in range(MAX_EQUALIZE_PASSES):
         data = load_layout(root_pane, None)
         ids, widths = _ordered_columns(panes_from_layout(data))
@@ -331,6 +403,9 @@ def main() -> int:
 
     try:
         data = load_layout(args.root_pane, args.layout_json)
+        # Refuse to plan a split into a 2D / stacked layout — the "rightmost
+        # column" target is ambiguous there and the caller would split blindly.
+        validate_single_row(data)
         rightmost, new_count = plan_next_split(panes_from_layout(data), args.root_pane)
     except (OSError, json.JSONDecodeError, SystemExit) as e:
         print(f"Error: {e}", file=sys.stderr)

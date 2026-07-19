@@ -54,6 +54,11 @@ class FakeHerdrHarness:
         state["panes"][pane_id]["agent_status"] = status
         self.write_state(state)
 
+    def delete_pane(self, pane_id):
+        state = self.read_state()
+        state["panes"].pop(pane_id, None)
+        self.write_state(state)
+
     def append_text(self, pane_id, text):
         state = self.read_state()
         state["panes"][pane_id]["text"] += text
@@ -191,6 +196,52 @@ class WaitForIdleMarkerSemanticsTests(unittest.TestCase):
         t.join()
         self.assertEqual(cp.returncode, 0, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
         self.assertIn(marker, cp.stdout)
+
+    def test_pane_disappearing_mid_wait_is_error_not_completion(self):
+        """Regression (P2 round 5): if the pane vanishes during the
+        content-stability wait, a FAILED `herdr pane read` must not stabilize
+        into a false completion (rc 0). It must surface as an error (rc 1).
+        --no-status forces the content-stability path (no agent-status).
+        """
+        baseline_text = "task running\n"
+        self.h.set_pane("p1", "working", baseline_text)
+        baseline = self.h.baseline_file(baseline_text)
+
+        def kill_pane():
+            time.sleep(0.4)
+            self.h.delete_pane("p1")  # pane gone: reads now fail (rc 1)
+
+        t = threading.Thread(target=kill_pane)
+        t.start()
+        cp = self.h.run_waiter(
+            "p1", "--baseline-file", baseline, "--no-status",
+            "--interval", "0.2", "--timeout", "3",
+        )
+        t.join()
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
+
+    def test_pane_gone_in_status_path_read_is_error_not_completion(self):
+        """Same disappearance, but on the prefer-status path: pane is idle/done
+        (so we take the terminal branch), then the transcript read fails. A
+        failed read there must be an error (rc 1), never a success. Uses a
+        pane id shaped like a real herdr id (w..:..) so resolve_pane accepts it
+        and the failure happens at the transcript read, not at resolution."""
+        baseline_text = "task running\n"
+        self.h.set_pane("w1:p1", "working", baseline_text)
+        baseline = self.h.baseline_file(baseline_text)
+
+        def flip_then_kill():
+            time.sleep(0.3)
+            self.h.set_status("w1:p1", "done")  # enter terminal branch...
+            time.sleep(0.05)
+            self.h.delete_pane("w1:p1")          # ...then the read fails
+
+        t = threading.Thread(target=flip_then_kill)
+        t.start()
+        cp = self.h.run_waiter("w1:p1", "--baseline-file", baseline, "--timeout", "3")
+        t.join()
+        # rc 1 (read failed) is the correct outcome; the bug returned 0.
+        self.assertEqual(cp.returncode, 1, msg=f"stdout={cp.stdout!r} stderr={cp.stderr!r}")
 
     def test_blocked_status_returns_3(self):
         self.h.set_pane("p1", "blocked", "trust dialog\n")
