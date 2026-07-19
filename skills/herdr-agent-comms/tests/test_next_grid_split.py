@@ -102,14 +102,18 @@ class PlanNextSplitTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             plan_next_split([{"pane_id": "x", "rect": {"x": 0, "width": 0}}], "x")
 
-    def test_panes_missing_rect_fields_are_dropped(self):
+    def test_pane_missing_rect_is_hard_error(self):
+        # Round 16 finding #2: a pane with a VALID id but no rect must be a HARD
+        # error, not a silent drop — dropping it during a live re-read would
+        # compute resize ops for a partial grid. (Was
+        # test_panes_missing_rect_fields_are_dropped, which asserted the drop;
+        # that lenient behaviour is now the bug.)
         layout = [
             {"pane_id": "root", "rect": {"x": 0, "width": 100}},
             {"pane_id": "ghost"},
         ]
-        rightmost, new_count = plan_next_split(layout, "root")
-        self.assertEqual(rightmost, "root")
-        self.assertEqual(new_count, 2)
+        with self.assertRaises(SystemExit):
+            plan_next_split(layout, "root")
 
 
 class PaneIdValidationTests(unittest.TestCase):
@@ -175,6 +179,59 @@ class PaneIdValidationTests(unittest.TestCase):
              {"pane_id": "b", "rect": {"x": 50, "width": 50}}],
             None,
         )
+        self.assertEqual(rightmost, "b")
+        self.assertEqual(new_count, 3)
+
+
+class PaneGeometryValidationTests(unittest.TestCase):
+    """Round 16 finding #2: every pane must carry valid rect/x/positive-width
+    geometry. A missing/malformed/non-positive value must be a HARD error, not a
+    silent drop — dropping one during a live equalize re-read would compute
+    resize ops for a partial grid (a column omitted)."""
+
+    def _split(self, second_rect):
+        return plan_next_split(
+            [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+             {"pane_id": "b", "rect": second_rect}],
+            None,
+        )
+
+    def test_missing_rect_raises(self):
+        with self.assertRaises(SystemExit):
+            plan_next_split(
+                [{"pane_id": "a", "rect": {"x": 0, "width": 50}},
+                 {"pane_id": "b"}],
+                None,
+            )
+
+    def test_missing_x_raises(self):
+        # Old behaviour defaulted missing x to 0, misordering columns.
+        with self.assertRaises(SystemExit):
+            self._split({"width": 50})
+
+    def test_missing_width_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": 50})
+
+    def test_zero_width_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": 50, "width": 0})
+
+    def test_negative_width_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": 50, "width": -10})
+
+    def test_non_numeric_width_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": 50, "width": "wide"})
+
+    def test_non_numeric_x_raises(self):
+        with self.assertRaises(SystemExit):
+            self._split({"x": "left", "width": 50})
+
+    def test_all_valid_geometry_still_plans(self):
+        # Control: fully-valid geometry plans normally (no over-reach).
+        rightmost, new_count = self._split({"x": 50, "width": 50})
         self.assertEqual(rightmost, "b")
         self.assertEqual(new_count, 3)
 

@@ -4,7 +4,7 @@ description: "Manage AI agent fleets in Herdr: split root + sub-agents into one 
 license: MIT
 effort: medium
 metadata:
-  version: 1.19.0
+  version: 1.20.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 compatibility: "Requires `herdr` on PATH and a running Herdr server (`herdr status`)."
 ---
@@ -271,10 +271,9 @@ After fully finishing, concatenate and print these two parts without spaces: HER
 python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
   || { echo "Error: $pane_id is not safe to send to (preflight failed) — see stderr" >&2; rm -f "$baseline_file"; exit 1; }
 herdr pane run "$pane_id" "$task" || { echo "Error: send failed for $pane_id" >&2; rm -f "$baseline_file"; exit 1; }
-
-# by name (literal, no Enter): herdr agent send reviewer "…"; then
-# herdr pane send-keys "$pane_id" enter
 ```
+
+To send by agent name without auto-submit, first **resolve the name to its pane id** and drive that one id for every step — see `references/herdr-recipes.md` "Pattern C". Never preflight/Enter one pane id while delivering text to a bare agent name; a stale/mismatched id would mutate one pane and submit into another.
 
 **Escaping:** pass the message as a single argv to `herdr` (quoted for the shell). For multi-line or code-heavy payloads, write a temp file and send a short instruction that reads it — see `references/herdr-recipes.md`.
 

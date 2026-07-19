@@ -292,16 +292,27 @@ herdr pane send-keys "$pane_id" enter \
   || { echo "Enter failed for $pane_id" >&2; exit 1; }
 ```
 
-**Pattern C — agent name:**
+**Pattern C — agent name:** resolve the name to **one** pane id first, then drive that **exact** id for the preflight, the text delivery, and the Enter. Never preflight/Enter a `$pane_id` while delivering text to a bare name — a stale/mismatched id would mutate one pane and submit into another.
 
 ```bash
-# Preflight BEFORE the first mutation — `agent send` injects text into the pane.
+# Resolve the agent NAME to a single pane id, then pin every step to it.
+pane_id="$(herdr agent get reviewer 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    a = d.get("result", {}).get("agent") or d.get("result", {})
+    pid = a.get("pane_id")
+except Exception:
+    pid = None
+print(pid or "", end="")')"
+[ -n "$pane_id" ] || { echo "Error: could not resolve agent 'reviewer' to a pane id" >&2; exit 1; }
+# Preflight BEFORE the first mutation — send-text injects into THIS pane.
 python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
   || { echo "Error: $pane_id not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
-# Guard agent send: a failed send must not fall through to a bare Enter.
-herdr agent send reviewer "summarize src/" \
-  || { echo "agent send failed for reviewer — not submitting Enter" >&2; exit 1; }
-# Preflight AGAIN immediately before the submitting Enter.
+# Deliver text to the resolved pane id (not the bare name), guarded.
+herdr pane send-text "$pane_id" "summarize src/" \
+  || { echo "send-text failed for $pane_id — not submitting Enter" >&2; exit 1; }
+# Preflight AGAIN immediately before the submitting Enter (same pane id).
 python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
   || { echo "Error: $pane_id not safe to submit (preflight failed) — see stderr" >&2; exit 1; }
 herdr pane send-keys "$pane_id" enter \

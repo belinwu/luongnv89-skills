@@ -239,24 +239,29 @@ def _validate_pane_ids(panes: list[dict]) -> None:
 def _ordered_columns(panes: list[dict]) -> tuple[list[str], list[float]]:
     """Order panes by rect.x and return parallel (ids, widths) lists.
 
-    Panes without a usable rect are dropped rather than guessed at — a
-    missing x/width is a layout-shape error the caller should see, not
-    something to silently default to 0. (Pane ids are validated first via
-    `_validate_pane_ids`, so a missing/duplicate id is a hard error, never a
-    silent drop that could retarget the split.)
+    EVERY pane must carry a valid geometry: a `rect` object with a numeric `x`
+    and a strictly-positive numeric `width`. A pane that fails this is a HARD
+    error, never a silent drop — dropping one during a live equalize re-read
+    would compute resize ops for a PARTIAL grid (a column omitted), scrambling
+    the layout. Defaulting a missing `x` to 0 (the old behaviour) also misorders
+    columns. Pane ids are validated first via `_validate_pane_ids`.
     """
     _validate_pane_ids(panes)
     ordered: list[tuple[float, str, float]] = []
     for pane in panes:
         pane_id = pane["pane_id"]  # validated above: a non-empty unique str
-        rect = pane.get("rect") or {}
+        rect = pane.get("rect")
+        if not isinstance(rect, dict):
+            raise SystemExit(f"pane {pane_id!r} has no rect object; cannot order columns")
+        if "x" not in rect or "width" not in rect:
+            raise SystemExit(f"pane {pane_id!r} rect is missing x/width")
         try:
-            x = float(rect.get("x", 0))
-            width = float(rect.get("width", 0))
-        except (TypeError, ValueError):
-            continue
+            x = float(rect["x"])
+            width = float(rect["width"])
+        except (TypeError, ValueError) as e:
+            raise SystemExit(f"pane {pane_id!r} rect x/width is not numeric: {e}") from e
         if width <= 0:
-            continue
+            raise SystemExit(f"pane {pane_id!r} has non-positive width {width:g}")
         ordered.append((x, pane_id, width))
     if not ordered:
         raise SystemExit("no usable pane rects in layout")
@@ -376,6 +381,12 @@ def equalize_live(root_pane: str | None) -> int:
 
     for _ in range(MAX_EQUALIZE_PASSES):
         data = load_layout(root_pane, None)
+        # Revalidate the FULL shape on every live re-read, not just once up
+        # front: a resize (or an external client) could turn the tab into a
+        # 2D/stacked or gappy layout mid-equalize, and computing resize ops for
+        # that would scramble the panes. `_ordered_columns` guarantees per-pane
+        # geometry; `validate_single_row` guarantees the row is still clean.
+        validate_single_row(data)
         ids, widths = _ordered_columns(panes_from_layout(data))
         area = area_width_from_layout(data)
         n = len(ids)
@@ -388,8 +399,9 @@ def equalize_live(root_pane: str | None) -> int:
         for boundary in range(n - 1):
             # Re-read after each resize: one resize shifts every column to the
             # right of the moved boundary, so later ops in this pass need the
-            # updated widths to aim correctly.
+            # updated widths to aim correctly. Revalidate the shape each time too.
             data = load_layout(root_pane, None)
+            validate_single_row(data)
             ids, widths = _ordered_columns(panes_from_layout(data))
             area = area_width_from_layout(data)
             targets = equal_targets(len(ids), area)
