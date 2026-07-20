@@ -3,10 +3,19 @@
 
 ## Unreleased
 
+### Docs
+- Reconcile root README skill catalog to on-disk `metadata.version` for all installable skills; add `fork-upstream-sync`, `herdr-agent-comms`, Google Antigravity install path, Project docs index, install validation link
+- Reconcile `docs/index.html` GitHub Pages copy to current catalog state: v1.15.0 baseline, 40 installable skills, Google Antigravity support, and no removed `clean-code` catalog card
+- Fix CONTRIBUTING setup commands to external skill-creator paths (`~/.claude/skills/skill-creator/scripts/`); align frontmatter example with `metadata.version`
+- Add `scripts/validate-install.sh`, `scripts/validate-contribute.sh` (check-only), `docs/DECISIONS.md`, `docs/troubleshooting.md`, `docs/archive/README.md`
+- Move former root documentation drafts into `docs/archive/` and explicitly unignore archived copies while keeping future root drafts ignored
+- Align `docs/guide-building-agent-skills.md` with catalog conventions (`docs/README.md`, suite nesting, skill-creator CLI paths)
+
 ### New Skills
 | Skill | Version |
 |-------|---------|
 | fork-upstream-sync | 1.0.3 |
+| herdr-agent-comms | 1.21.0 |
 | diagram-generator | 1.0.0 (umbrella routing draw.io + Excalidraw) |
 
 ### Skills Updated
@@ -15,10 +24,31 @@
 | docs-generator → doc-manager | 1.2.5 → 2.0.1 |
 | tmux-agent-comms | 1.3.0 → 1.9.0 (observability + app terminal tabs by default) |
 | landing-page-generator | 1.1.4 → 1.2.0 (absorbs README-to-landing as Mode B) |
-| code-review | 1.2.0 → 2.0.0 (merge code-optimizer + clean-code + slop-cleanup as modes) |
+| code-review | 1.2.0 → 2.0.1 (merge code-optimizer + clean-code + slop-cleanup as modes) |
 | drawio-generator | 1.2.2 → 1.2.3 (nested under diagram-generator umbrella) |
 | excalidraw-generator | 1.3.2 → 1.3.3 (nested under diagram-generator umbrella) |
 | viral-product-evaluator | 1.2.3 → 1.2.4 (update merged-skill cross-reference) |
+| agent-config | → 1.3.1 |
+| aso-marketing | → 1.2.1 |
+| auto-push | → 1.0.3 |
+| brand-name-checker | → 1.3.2 |
+| cli-builder | → 1.0.4 |
+| devops-pipeline | → 2.0.3 |
+| frontend-design | → 1.2.3 |
+| idea-validator | → 1.5.0 |
+| install-script-generator | → 2.2.0 |
+| logo-designer | → 1.2.2 |
+| ollama-optimizer | → 1.1.0 |
+| opencode-runner | → 1.4.1 |
+| oss-ready | → 1.2.1 |
+| prd-generator | → 1.3.2 |
+| release-manager | → 2.6.0 |
+| security-setup | → 1.4.0 |
+| seo-ai-optimizer | → 1.2.1 |
+| subagent-creator | → 1.1.2 |
+| tad-generator | → 1.4.0 |
+| tasks-generator | → 1.3.0 |
+| website-cloner | → 1.1.6 |
 
 **Breaking (doc-manager):** `docs-generator` renamed to `doc-manager`; the `/docs-generator` invocation and `--skill docs-generator` install path are removed — use `/doc-manager`. Reoriented from "restructure docs into a hierarchy" to "generate missing or update existing docs so every page matches the code." New behavior: every non-obvious claim is cited to `path:line`, ambiguities are resolved by asking and logged to `docs/DECISIONS.md`, nothing is invented. Runbook (deploy/setup/process) docs additionally get a check-only `validate.sh` and a maintained `docs/troubleshooting.md`. **2.0.1:** runbook acceptance no longer hard-requires live `--check` exit 0 for operator env/network prereqs; validate script template parses all flags (`--check` + `--run-destructive`).
 

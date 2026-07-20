@@ -21,6 +21,8 @@ Skills are independent files. Works with Claude Code, Cursor, Windsurf, GitHub C
 
 ## Install
 
+> Validate this runbook: `./scripts/validate-install.sh --check`
+
 Pick one:
 
 ```bash
@@ -150,7 +152,7 @@ npx skills add https://github.com/luongnv89/skills --skill <name>
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**code-review**](skills/code-review/) | 2.0.0 | high | Review or improve code — 4 modes: bugs/security, performance, clean-code audit, slop cleanup |
+| [**code-review**](skills/code-review/) | 2.0.1 | high | Review or improve code — 4 modes: bugs/security, performance, clean-code audit, slop cleanup |
 | [**test-coverage**](skills/test-coverage/) | 1.3.0 | low | Target untested branches and edge cases |
 | [**dont-make-me-think**](skills/dont-make-me-think/) | 1.3.0 | medium | Usability review using Krug's principles |
 
@@ -169,30 +171,31 @@ Adjacent skills: **test-coverage** (generate tests for untested branches) · **d
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**auto-push**](skills/auto-push/) | 1.0.2 | low | Commit message + stage + push with secret and size checks |
-| [**devops-pipeline**](skills/devops-pipeline/) | 2.0.1 | medium | Pre-commit + GitHub Actions quality gates |
-| [**security-setup**](skills/security-setup/) | 1.3.2 | high | Local pre-commit secret scans, dep checks, static analysis, gated CI |
-| [**release-manager**](skills/release-manager/) | 2.5.0 | max | Bump, changelog, tag, GitHub release, publish |
+| [**auto-push**](skills/auto-push/) | 1.0.3 | low | Commit message + stage + push with secret and size checks |
+| [**devops-pipeline**](skills/devops-pipeline/) | 2.0.3 | medium | Pre-commit + GitHub Actions quality gates |
+| [**security-setup**](skills/security-setup/) | 1.4.0 | high | Local pre-commit secret scans, dep checks, static analysis, gated CI |
+| [**fork-upstream-sync**](skills/fork-upstream-sync/) | 1.0.3 | medium | Sync a fork with upstream while keeping feature branches and open PRs mergeable |
+| [**release-manager**](skills/release-manager/) | 2.6.0 | max | Bump, changelog, tag, GitHub release, publish |
 
 ### Product Planning
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**idea-validator**](skills/idea-validator/) | 1.4.0 | max | Market, feasibility, competitor checks for ideas |
+| [**idea-validator**](skills/idea-validator/) | 1.5.0 | max | Market, feasibility, competitor checks for ideas |
 | [**viral-product-evaluator**](skills/viral-product-evaluator/) | 1.2.4 | high | Score codebase + landing page vs 32 viral principles |
-| [**brand-name-checker**](skills/brand-name-checker/) | 1.3.0 | max | Trademark, domain, social, registry conflicts |
-| [**prd-generator**](skills/prd-generator/) | 1.3.1 | max | Structured PRD from idea or validate notes |
-| [**tad-generator**](skills/tad-generator/) | 1.3.0 | max | Technical architecture document from PRD |
-| [**tasks-generator**](skills/tasks-generator/) | 1.2.1 | max | Sprint tasks and plan from PRD |
+| [**brand-name-checker**](skills/brand-name-checker/) | 1.3.2 | max | Trademark, domain, social, registry conflicts |
+| [**prd-generator**](skills/prd-generator/) | 1.3.2 | max | Structured PRD from idea or validate notes |
+| [**tad-generator**](skills/tad-generator/) | 1.4.0 | max | Technical architecture document from PRD |
+| [**tasks-generator**](skills/tasks-generator/) | 1.3.0 | max | Sprint tasks and plan from PRD |
 
 ### Frontend & Design
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**frontend-design**](skills/frontend-design/) | 1.2.2 | high | Production UIs with usability-first approach |
-| [**logo-designer**](skills/logo-designer/) | 1.2.1 | medium | 7 SVG logo variants from project context |
+| [**frontend-design**](skills/frontend-design/) | 1.2.3 | high | Production UIs with usability-first approach |
+| [**logo-designer**](skills/logo-designer/) | 1.2.2 | medium | 7 SVG logo variants from project context |
 | [**diagram-generator**](skills/diagram-generator/) | 1.0.0 | high | One entry point for diagrams — routes to draw.io XML or Excalidraw JSON |
-| [**website-cloner**](skills/website-cloner/) | 1.1.5 | high | 6-phase URL to improved Vite/React/Tailwind site |
+| [**website-cloner**](skills/website-cloner/) | 1.1.6 | high | 6-phase URL to improved Vite/React/Tailwind site |
 
 **Website cloner phases** (install individually or as suite):
 
@@ -218,26 +221,27 @@ Adjacent skills: **test-coverage** (generate tests for untested branches) · **d
 |---|---|---|---|
 | [**doc-manager**](skills/doc-manager/) | 2.0.1 | medium | Generate/update docs to match code, cited to path:line, never invented |
 | [**landing-page-generator**](skills/landing-page-generator/) | 1.2.0 | high | Landing pages: marketing copy from a brief, or a README-to-landing rewrite |
-| [**seo-ai-optimizer**](skills/seo-ai-optimizer/) | 1.2.0 | high | Technical SEO + AI-bot directives |
-| [**oss-ready**](skills/oss-ready/) | 1.2.0 | low | Add OSS files and templates |
-| [**agent-config**](skills/agent-config/) | 1.3.0 | medium | CLAUDE.md + AGENTS.md per best practices |
-| [**subagent-creator**](skills/subagent-creator/) | 1.0.1 | high | Create, evaluate, improve Claude Code subagent files (.claude/agents/*.md) |
+| [**seo-ai-optimizer**](skills/seo-ai-optimizer/) | 1.2.1 | high | Technical SEO + AI-bot directives |
+| [**oss-ready**](skills/oss-ready/) | 1.2.1 | low | Add OSS files and templates |
+| [**agent-config**](skills/agent-config/) | 1.3.1 | medium | CLAUDE.md + AGENTS.md per best practices |
+| [**subagent-creator**](skills/subagent-creator/) | 1.1.2 | high | Create, evaluate, improve Claude Code subagent files (.claude/agents/*.md) |
 
 ### App Store
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**aso-marketing**](skills/aso-marketing/) | 1.2.0 | max | App Store + Google Play keyword and metadata optimization |
+| [**aso-marketing**](skills/aso-marketing/) | 1.2.1 | max | App Store + Google Play keyword and metadata optimization |
 | [**appstore-review-checker**](skills/appstore-review-checker/) | 1.2.0 | high | Pre-submission audit vs Apple guidelines |
 
 ### Tooling
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**cli-builder**](skills/cli-builder/) | 1.0.3 | high | 5-step CLI tool builder with approval gates |
-| [**ollama-optimizer**](skills/ollama-optimizer/) | 1.0.4 | medium | Hardware-aware Ollama tuning |
-| [**install-script-generator**](skills/install-script-generator/) | 2.1.0 | high | Cross-platform install.sh with env detection |
-| [**opencode-runner**](skills/opencode-runner/) | 1.4.0 | medium | Delegate work to opencode free cloud models |
+| [**cli-builder**](skills/cli-builder/) | 1.0.4 | high | 5-step CLI tool builder with approval gates |
+| [**ollama-optimizer**](skills/ollama-optimizer/) | 1.1.0 | medium | Hardware-aware Ollama tuning |
+| [**install-script-generator**](skills/install-script-generator/) | 2.2.0 | high | Cross-platform install.sh with env detection |
+| [**opencode-runner**](skills/opencode-runner/) | 1.4.1 | medium | Delegate work to opencode free cloud models |
+| [**herdr-agent-comms**](skills/herdr-agent-comms/) | 1.21.0 | medium | Manage Herdr agent fleets: tile panes, message/wait/read, steer |
 | [**tmux-agent-comms**](skills/tmux-agent-comms/) | 1.9.0 | medium | Spawn, message, read CLI agents in tmux |
 
 ---
@@ -252,16 +256,29 @@ Mirror the layout for your own multi-skill products.
 
 ---
 
+## Project docs
+
+| Doc | Purpose |
+|---|---|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribute skills; structure and versioning |
+| [docs/guide-building-agent-skills.md](docs/guide-building-agent-skills.md) | Authoring guide (plan → write → validate → distribute) |
+| [docs/brand_kit.md](docs/brand_kit.md) | Logo files, colors, typography |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Doc ambiguity resolutions |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Install/setup validation fixes |
+| [docs/archive/](docs/archive/) | Historical work notes (not current product docs) |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+
 ## FAQ
 
 **Do I need every skill?**  
 No. Pick only what you need. All are independent.
 
 **Which agents work?**  
-Any that load external skill files. Tested with Claude Code, Cursor, Windsurf, GitHub Copilot, OpenAI Codex, OpenCode.
+Any that load external skill files. Installer tools (`install.sh:23`): Claude Code, Cursor, Windsurf, GitHub Copilot, OpenAI Codex, OpenCode, Google Antigravity.
 
 **How do I make my own?**  
-Follow [CONTRIBUTING.md](CONTRIBUTING.md) or use patterns from existing skills.
+Follow [CONTRIBUTING.md](CONTRIBUTING.md), [docs/guide-building-agent-skills.md](docs/guide-building-agent-skills.md), or patterns from existing skills.
 
 **Do skills change my runtime code?**  
 No. They only guide the agent during development.
@@ -289,6 +306,7 @@ npx skills add https://github.com/luongnv89/skills --skill code-review
 | GitHub Copilot | `~/.agents/skills/<skill>/` + `.github/instructions/<skill>.instructions.md` | same |
 | OpenAI Codex | `~/.agents/skills/<skill>/` + `~/.codex/AGENTS.md` | same |
 | OpenCode | `~/.agents/skills/<skill>/` | same |
+| Google Antigravity | `~/.agents/skills/<skill>/` | same |
 
 </details>
 
@@ -304,6 +322,9 @@ npx skills add https://github.com/luongnv89/skills --skill code-review
 │       ├── references/
 │       └── docs/
 └── install.sh / remote-install.sh
+
+# Suite umbrellas also hold child skills:
+# skills/<umbrella>/<child>/SKILL.md  (install.sh:44-46)
 ```
 </details>
 
@@ -317,7 +338,9 @@ Minimal:
 ```yaml
 ---
 name: my-skill
-description: "When to use and what it produces"
+description: "When to use and what it produces. Don't use for X."
+license: MIT
+effort: medium
 metadata:
   version: 1.0.0
   author: "Your Name"

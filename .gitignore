@@ -35,6 +35,17 @@ MEDIUM_PRIORITY_SKILLS_REVIEW.md
 MEDIUM_PRIORITY_SUBAGENT_ARCHITECTURES.md
 PHASE_1_SUMMARY.md
 
+# Published archive copies of former documentation drafts
+!docs/archive/APPSTORE_IMPLEMENTATION_CHECKLIST.md
+!docs/archive/APPSTORE_SKILL_REVIEW.md
+!docs/archive/APPSTORE_SKILL_TEST_SUMMARY.md
+!docs/archive/COMPLETE_IMPLEMENTATION_SUMMARY.md
+!docs/archive/DEPLOYMENT_CHECKLIST.md
+!docs/archive/IMPLEMENTATION_COMPLETE.md
+!docs/archive/MEDIUM_PRIORITY_SKILLS_REVIEW.md
+!docs/archive/MEDIUM_PRIORITY_SUBAGENT_ARCHITECTURES.md
+!docs/archive/PHASE_1_SUMMARY.md
+
 # Skill auto-improver iteration artifacts
 .asm-improver/
 SKILL.md.bak

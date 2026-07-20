@@ -37,7 +37,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 
 When contributing to this project:
 
-- Never commit secrets, API keys, or credentials
-- Use environment variables for sensitive configuration
-- Follow secure coding practices
+- Never commit secrets, API keys, credentials, `.env`, or paths matching `**/credentials*` (`CLAUDE.md:35`)
+- Prefer environment variables for sensitive configuration
+- Do not open public issues for vulnerabilities (use the advisory link above)
 - Report any security concerns immediately
