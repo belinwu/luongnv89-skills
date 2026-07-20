@@ -6,16 +6,20 @@ The Agent Skills logo is built around the **Neural Plug** concept: a hexagonal n
 
 ### Logo Files
 
+Files on disk under `assets/logo/` (verified 2026-07-20):
+
 ```
 assets/logo/
 ├── logo-full.svg      # Mark + wordmark (horizontal lockup)
-├── logo-mark.svg      # Symbol only (64×64)
+├── logo-mark.svg      # Symbol only
 ├── logo-wordmark.svg  # Text only
-├── logo-icon.svg      # App icon (512×512, rounded square)
-├── favicon.svg        # 16×16 optimized
+├── logo-icon.svg      # App icon (rounded square)
+├── favicon.svg        # Favicon
 ├── logo-white.svg     # For dark backgrounds
 └── logo-black.svg     # Full monochrome
 ```
+
+Root README uses `assets/logo/logo-icon.svg` (`README.md:2-3`).
 
 ### Usage Guidelines
 

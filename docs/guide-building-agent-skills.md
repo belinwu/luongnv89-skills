@@ -1,6 +1,7 @@
 # Guide to Building, Testing, and Validating Agent Skills for Claude
 
-> Based on "The Complete Guide to Building Skills for Claude" by Anthropic
+> Based on "The Complete Guide to Building Skills for Claude" by Anthropic.
+> Repo-specific conventions for **this** catalog override generic advice where noted (see [CONTRIBUTING.md](../CONTRIBUTING.md), [CLAUDE.md](../CLAUDE.md)).
 
 ---
 
@@ -42,9 +43,11 @@ A skill is a folder containing:
 
 | File/Folder | Required? | Purpose |
 |---|---|---|
-| `SKILL.md` | **Required** | Main instruction file with YAML frontmatter |
+| `SKILL.md` | **Required** | Main instruction file with YAML frontmatter (`CLAUDE.md:16`) |
 | `scripts/` | Optional | Executable code (Python, Bash, etc.) |
 | `references/` | Optional | Documentation loaded as needed |
+| `agents/` | Optional | Subagent prompts (`CLAUDE.md:19`) |
+| `docs/README.md` | Optional | Human-only catalog page; must start with AI-skip HTML comment (`CLAUDE.md:20`) |
 | `assets/` | Optional | Templates, fonts, icons used in output |
 
 ### Progressive Disclosure (Three Levels)
@@ -121,15 +124,20 @@ Result: Fully planned sprint with tasks created
 ```
 your-skill-name/
 ├── SKILL.md                    # Required - main skill file
+├── docs/                       # Optional - human-only (not auto-loaded)
+│   └── README.md                 # AI-skip HTML comment required at top
 ├── scripts/                    # Optional - executable code
 │   ├── process_data.py
 │   └── validate.sh
 ├── references/                 # Optional - documentation
 │   ├── api-guide.md
 │   └── examples/
+├── agents/                     # Optional - subagent prompts
 └── assets/                     # Optional - templates, etc.
     └── report-template.md
 ```
+
+Suite umbrellas may nest child skills one level deep (`skills/<umbrella>/<child>/`); installers discover both levels (`install.sh:44-46`).
 
 ### Critical Naming Rules
 
@@ -142,8 +150,9 @@ your-skill-name/
 - No spaces: ~~`Notion Project Setup`~~
 - No underscores: ~~`notion_project_setup`~~
 - No capitals: ~~`NotionProjectSetup`~~
+- `name` in frontmatter must equal the parent directory name (`CLAUDE.md:39`)
 
-**No README.md inside the skill folder.** All documentation goes in SKILL.md or `references/`.
+**No root-level `README.md` inside the skill folder.** Agent-facing docs go in `SKILL.md` or `references/`. Human catalog notes may live at `docs/README.md` with the AI-skip comment (`CLAUDE.md:20`, [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
 ---
 
@@ -219,14 +228,16 @@ effort: high                    # Optional: low | medium | high | max (default: 
 license: MIT                    # Optional: for open-source skills
 compatibility: "Requires Node.js 18+, works on macOS/Linux"  # Optional: 1-500 chars
 allowed-tools: "Bash(python:*) Bash(npm:*) WebFetch"         # Optional: restrict tool access
-metadata:                       # Optional: custom key-value pairs
+metadata:                       # This catalog requires metadata.version on every skill
   author: Company Name
-  version: 1.0.0
+  version: 1.0.0                # REQUIRED here (semver); bump on every SKILL.md edit (CLAUDE.md:28)
   mcp-server: server-name
   category: productivity
   tags: [project-management, automation]
 ---
 ```
+
+**This catalog:** treat `metadata.version` as required, not optional. Quote frontmatter strings that contain `:` `#` `-` `<` `>` `|` `,` `&` `?` `!` (`CLAUDE.md:29`). Keep `SKILL.md` under 500 lines (`CLAUDE.md:30`).
 
 **`effort` (optional):**
 - Controls reasoning effort level for the skill
@@ -437,9 +448,17 @@ Without skill:                    With skill:
 
 ### Use the skill-creator Tool
 
-The `skill-creator` skill (available in Claude.ai and Claude Code) can help you build and validate skills.
+The `skill-creator` skill (available in Claude.ai and Claude Code) can help you build and validate skills. **In this repository it is not vendored under `skills/`** — scripts live at `~/.claude/skills/skill-creator/scripts/` after skill-creator is installed for your agent (`CLAUDE.md:7-9`).
 
-**To use it:**
+**CLI (this repo):**
+
+```bash
+python3 ~/.claude/skills/skill-creator/scripts/init_skill.py my-skill --path skills/
+python3 ~/.claude/skills/skill-creator/scripts/quick_validate.py skills/my-skill
+python3 ~/.claude/skills/skill-creator/scripts/package_skill.py skills/my-skill
+```
+
+**To use it conversationally:**
 ```
 "Use the skill-creator skill to help me build a skill for [your use case]"
 ```
@@ -453,7 +472,7 @@ The `skill-creator` skill (available in Claude.ai and Claude Code) can help you 
 "Review this skill and suggest improvements"
 ```
 
-> Note: skill-creator helps you design and refine skills but does not execute automated test suites or produce quantitative evaluation results.
+> Note: skill-creator helps you design and refine skills; `quick_validate.py` checks structure/frontmatter. Full behavioral eval suites are separate (`run_eval.py` / skill-creator docs).
 
 ### Validation Checklist
 
@@ -551,30 +570,22 @@ description: Advanced data analysis for CSV files. Use for statistical
 
 ### Via GitHub (Recommended)
 
-1. **Host on GitHub** with a public repo
-   - Clear README with installation instructions
-   - Example usage and screenshots
+For **this** catalog (`luongnv89/skills`), end users install via the methods in [README.md](../README.md#install):
 
-2. **Create an installation guide:**
-   ```markdown
-   ## Installing the [Your Service] Skill
+```bash
+npx skills add https://github.com/luongnv89/skills --skill <name>
+# or
+curl -sSL https://raw.githubusercontent.com/luongnv89/skills/main/remote-install.sh | bash
+# or clone + bash install.sh
+```
 
-   1. Download the skill:
-      - Clone repo: `git clone https://github.com/yourcompany/skills`
-      - Or download ZIP from Releases
+Installer tool paths are defined in `install.sh` (tools list at `install.sh:23`).
 
-   2. Install in Claude:
-      - Open Claude.ai > Settings > Skills
-      - Click "Upload skill"
-      - Select the skill folder (zipped)
+Generic Claude.ai upload flow (upstream guide):
 
-   3. Enable the skill:
-      - Toggle on the [Your Service] skill
-      - Ensure your MCP server is connected
-
-   4. Test:
-      - Ask Claude: "Set up a new project in [Your Service]"
-   ```
+1. Host on GitHub with a public README and install instructions
+2. Or upload a zipped skill folder via Claude.ai **Settings > Capabilities > Skills**
+3. Test with a trigger phrase from the skill description
 
 ### Via API
 
