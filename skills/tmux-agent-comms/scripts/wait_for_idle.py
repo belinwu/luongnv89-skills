@@ -12,15 +12,21 @@ act on each:
                       the caller must surface this to the user, not proceed.
   - TIMEOUT (exit 2): never settled within --timeout (agent still working).
 
+By default this is a **post-send completion wait**: it will not treat a
+pre-existing idle pane as success until it has seen work (transcript change
+and/or busy chrome), or — when arranged — a fresh `--completion-marker` that
+was absent from the pre-send baseline. Use `--ready` for boot/ready waits that
+may already be idle.
+
 Why this exists: a fixed `sleep` either wastes time or reads a half-written
 reply, and content-stability alone can't tell "ready input box" from "stuck on a
 trust prompt" (both are stable). Polling-to-stable + chrome detection adapts to
 however long the agent takes and refuses to fire into a dialog.
 
-By default it prints only the NEW lines since the wait started (the agent's
-answer), not the whole 24-line pane of box-drawing and status bars. Over a
-multi-turn conversation, relaying deltas instead of full frames is the dominant
-token saving. Use --full to print the entire settled pane instead.
+By default it prints only the NEW lines since the baseline (the agent's
+answer), not the whole pane of box-drawing and status bars. Over a multi-turn
+conversation, relaying deltas instead of full frames is the dominant token
+saving. Use --full to print the entire settled pane instead.
 
 Usage:
     python3 wait_for_idle.py <target> [options]
@@ -29,12 +35,17 @@ Usage:
 
 Options:
     --timeout SEC        give up after this many seconds (default: 120)
+    --baseline-file PATH use a pre-send capture as the baseline (closes the
+                         fast-completion race when the waiter starts late)
+    --completion-marker S require S when proving THIS send finished; prompt
+                         echo of partial fragments must not satisfy it
     --quiet-cycles N     consecutive unchanged reads required to call it settled
                          (default: 3)
     --interval SEC       seconds between captures (default: 2)
     --scrollback N       capture N lines of scrollback too (default: 0, visible only)
     --full               print the entire settled pane, not just new lines
     --no-print           print nothing (exit code only)
+    --ready              accept already-idle without requiring prior work
     --busy-marker STR    add a spinner/working marker (repeatable). Also via the
                          env var TAC_BUSY_MARKERS (newline- or |-separated).
     --block-marker STR   add a needs-human prompt marker (repeatable). Also via
@@ -46,6 +57,8 @@ Exit codes:
     2  timed out before the pane settled
     3  blocked: settled on a prompt that needs human input
 """
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -82,10 +95,10 @@ DEFAULT_BUSY_MARKERS = (
 # ends in a numbered list would falsely match, the same prose trap the busy
 # markers avoid. Add agent-specific prompts via --block-marker / TAC_BLOCK_MARKERS.
 DEFAULT_BLOCK_MARKERS = (
-    "do you trust",            # Claude Code / Gemini trust-folder dialog
+    "do you trust",  # Claude Code / Gemini trust-folder dialog
     "trust the files",
-    "paste your api key",      # Gemini auth prompt
-    "press enter to submit",   # auth/confirm dialogs
+    "paste your api key",  # Gemini auth prompt
+    "press enter to submit",  # auth/confirm dialogs
 )
 
 # Trailing non-empty lines scanned for each marker class. Busy chrome is a single
@@ -126,6 +139,17 @@ def capture(target, scrollback):
     return result.stdout
 
 
+def try_capture(target, scrollback):
+    """Return pane text, or None if capture failed (pane gone mid-wait)."""
+    cmd = ["tmux", "capture-pane", "-t", target, "-p"]
+    if scrollback > 0:
+        cmd += ["-S", f"-{scrollback}"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
 def _tail_lower(text, n):
     nonempty = [ln for ln in text.splitlines() if ln.strip()]
     return "\n".join(nonempty[-n:]).lower()
@@ -159,18 +183,47 @@ def emit(text):
         sys.stdout.write("\n")
 
 
+def marker_fresh(marker, baseline, current):
+    """True when the full joined marker is in current and absent from baseline."""
+    return bool(marker) and marker in current and marker not in baseline
+
+
+def build_marker_lists(busy_extra, block_extra):
+    busy = list(DEFAULT_BUSY_MARKERS) + _env_markers("TAC_BUSY_MARKERS") + [
+        m.lower() for m in busy_extra
+    ]
+    block = list(DEFAULT_BLOCK_MARKERS) + _env_markers("TAC_BLOCK_MARKERS") + [
+        m.lower() for m in block_extra
+    ]
+    return busy, block
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Wait until a tmux agent pane is idle, then print what's new.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=True,
     )
     parser.add_argument("target", help="tmux target: session name or session:window.pane")
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--baseline-file",
+        help="pre-send capture; closes the fast-completion race when the waiter starts late",
+    )
+    parser.add_argument(
+        "--completion-marker",
+        help="marker the agent prints only after finishing THIS task",
+    )
     parser.add_argument("--quiet-cycles", type=int, default=3)
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--scrollback", type=int, default=0)
     parser.add_argument("--full", action="store_true", help="print the whole pane, not just new lines")
     parser.add_argument("--no-print", action="store_true")
+    parser.add_argument(
+        "--ready",
+        action="store_true",
+        help="accept already-idle without requiring prior work (boot/readiness waits)",
+    )
     parser.add_argument("--busy-marker", action="append", default=[])
     parser.add_argument("--block-marker", action="append", default=[])
     args = parser.parse_args()
@@ -186,8 +239,7 @@ def main():
     if args.interval <= 0:
         fail("--interval must be > 0.", code=1)
 
-    busy_markers = list(DEFAULT_BUSY_MARKERS) + _env_markers("TAC_BUSY_MARKERS") + [m.lower() for m in args.busy_marker]
-    block_markers = list(DEFAULT_BLOCK_MARKERS) + _env_markers("TAC_BLOCK_MARKERS") + [m.lower() for m in args.block_marker]
+    busy_markers, block_markers = build_marker_lists(args.busy_marker, args.block_marker)
 
     # Fail fast if the target session doesn't exist, with an actionable message.
     has = subprocess.run(
@@ -203,16 +255,67 @@ def main():
         )
 
     deadline = time.monotonic() + args.timeout
-    baseline = capture(args.target, args.scrollback)  # state at the start of the wait
+    if args.baseline_file:
+        try:
+            with open(args.baseline_file, encoding="utf-8") as f:
+                baseline = f.read()
+        except OSError as e:
+            fail(f"could not read baseline file: {e}", code=1)
+    else:
+        baseline = capture(args.target, args.scrollback)
+
     previous = baseline
     stable_reads = 1  # the first capture counts as one read of the current state
+    saw_work = False  # transcript change vs baseline and/or busy chrome
+
+    # Immediate check: already blocked at wait start.
+    if looks_blocked(baseline, block_markers) and not looks_busy(baseline, busy_markers):
+        # For --ready, a stable blocked pane is blocked. For post-send, also
+        # treat pre-existing dialog as blocked so we don't type into it later.
+        # If the pane is both busy and shows dialog-ish text, prefer busy and keep waiting.
+        print(
+            f"Error: target '{args.target}' is blocked on a prompt that needs "
+            f"human input (e.g. a trust or auth dialog). Do NOT send a message "
+            f"— it would be read as menu input. Show the pane to the user and "
+            f"ask how to respond.",
+            file=sys.stderr,
+        )
+        if not args.no_print:
+            emit(baseline)
+        return 3
+
+    # --ready + already stable idle at first capture.
+    if args.ready and not looks_busy(baseline, busy_markers):
+        # Need quiet-cycles on a live re-read path for consistency, but a
+        # single non-busy non-blocked capture is the common ready case when
+        # the agent finished booting before we started waiting. Re-check once
+        # quickly if interval is small; otherwise accept if not busy/blocked.
+        if not looks_blocked(baseline, block_markers):
+            # Still require quiet-cycles of live polling so a mid-boot splash
+            # that happens to look idle for one frame doesn't false-ready.
+            # Fall through into the loop with previous=baseline.
+            pass
 
     while time.monotonic() < deadline:
         time.sleep(args.interval)
-        current = capture(args.target, args.scrollback)
+        current = try_capture(args.target, args.scrollback)
+        if current is None:
+            print(
+                f"Error: tmux capture-pane failed for target '{args.target}' "
+                f"(session gone mid-wait?).",
+                file=sys.stderr,
+            )
+            return 1
 
-        if current != previous or looks_busy(current, busy_markers):
-            # Output changed, or a spinner is up — not settled yet.
+        if looks_busy(current, busy_markers):
+            saw_work = True
+            stable_reads = 0
+            previous = current
+            continue
+
+        if current != previous:
+            if current != baseline:
+                saw_work = True
             stable_reads = 0
             previous = current
             continue
@@ -221,7 +324,7 @@ def main():
         if stable_reads < args.quiet_cycles:
             continue
 
-        # Settled. Decide IDLE vs BLOCKED before printing.
+        # Settled. Decide BLOCKED vs IDLE (and whether idle is acceptable yet).
         if looks_blocked(current, block_markers):
             print(
                 f"Error: target '{args.target}' is blocked on a prompt that needs "
@@ -233,6 +336,24 @@ def main():
             if not args.no_print:
                 emit(current)  # always show the full pane so the user sees the dialog
             return 3
+
+        if marker_fresh(args.completion_marker, baseline, current):
+            if not args.no_print:
+                out = current if args.full else new_lines(baseline, current)
+                emit(out if out.strip() else current)
+            return 0
+
+        if args.completion_marker and not args.ready:
+            # Marker-enabled post-send waits never infer completion from quiet
+            # prompt echo alone — keep waiting for the joined marker.
+            stable_reads = 0
+            continue
+
+        if not saw_work and not args.ready:
+            # Still pre-task idle with no transcript change and no busy chrome —
+            # keep waiting for THIS send's work to appear.
+            stable_reads = 0
+            continue
 
         if not args.no_print:
             out = current if args.full else new_lines(baseline, current)

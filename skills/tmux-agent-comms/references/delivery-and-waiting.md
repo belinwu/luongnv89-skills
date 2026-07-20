@@ -2,42 +2,125 @@
 
 The deep "why" behind SKILL.md Phases 3 and 4. The SKILL.md gives you the commands and the branch logic; read this when you need to understand *why* a step is shaped the way it is, or when a check behaves unexpectedly.
 
+## Fail-closed preflight
+
+Before every `send-keys` **and** before every recovery Enter, run:
+
+```bash
+python3 "$here/preflight_send.py" "$target"
+```
+
+| Exit | Meaning | Action |
+|---|---|---|
+| 0 | sendable (idle) | proceed |
+| 2 | working (busy chrome) | wait for settle; do not send |
+| 3 | blocked (dialog) | surface to human; do not send |
+| 4 | unverifiable | refuse; fix session / capture |
+| 1 | usage / tmux missing | fix environment |
+
+Typing into a trust dialog submits menu garbage and reports a false success. Typing into a working pane races the prior task's completion signal. Preflight is the single-target twin of `broadcast.sh` Phase 1b — keep them in lockstep.
+
 ## Why "text on screen" does not prove a message was submitted
 
-After `send-keys`, the message text appears in `capture-pane` whether it was **submitted** or is merely **typed and still parked in the input box** — both render as the same characters. So "the text is on screen" only proves it was typed, not sent. Reading the message text back out of the pane to confirm delivery is therefore unreliable: a single capture can't tell "echoed in the transcript" from "still parked in the input box."
+After `send-keys`, the message text appears in `capture-pane` whether it was **submitted** or is merely **typed and still parked in the input box** — both render as the same characters. So "the text is on screen" only proves it was typed, not sent. Reading the message text back out of the pane to confirm delivery is therefore unreliable.
 
-The one signal that reliably means *submitted* is **post-send activity**: once the agent accepts the message it starts working (a spinner / `esc to interrupt`). That is why the Phase 3 delivery check keys off activity, not text presence.
+The reliable signal is **post-send activity** against a **pre-send baseline**:
 
-### The bounded delivery check (one fixed wait, then one capture)
+1. Capture baseline to a **file** before send.
+2. Preflight, then send text + Enter (separate calls).
+3. Sleep once (~5s), capture to a **second file**.
+4. Delivered if busy chrome (`esc to interrupt` / spinner) **or** `cmp` shows the files differ.
 
-See SKILL.md Phase 3 for the exact command — one short fixed delay (`sleep 5`), then a single `capture-pane`/`grep` check. Never a poll loop here; that can hang. The reply-settling poll belongs to Phase 4, not the delivery check.
+Use file-to-file `cmp`, not `$(...)` string compare — command substitution strips trailing newlines and makes identical transcripts look different.
 
 ### The two outcomes (neither is a reply timeout)
 
-- **`delivered`** — the agent is busy (spinner / `esc to interrupt`), which only appears once the message was accepted *and* submitted → proceed to Phase 4.
-- **`NOT-DELIVERED`** — no post-send activity. Usually the separate-Enter gotcha (the message typed but the `Enter` didn't submit) or a dropped/swallowed keystroke. The fix covers both: **send a lone `Enter`** (`tmux send-keys -t agent1 Enter`) and re-check once — a no-op if it was already submitted; if there's still nothing, **re-type** the message. Report this **distinctly** from a Phase 4 reply timeout: nothing was submitted, so don't start waiting until it lands.
+- **`delivered` / transcript activity** — agent accepted input (spinner) or the pane changed vs baseline → proceed to Phase 4. Activity may be only prompt echo; the split completion marker distinguishes echo from a finished reply.
+- **`NOT-DELIVERED`** — no post-send activity. Usually the separate-Enter gotcha or a dropped keystroke. **Re-run preflight**, then send a lone `Enter`, re-check once. Propagate failure if still quiet — do not report success. Distinct from a Phase 4 reply timeout: nothing was submitted, so don't start waiting until it lands.
 
-If your agent's spinner glyphs differ, key the check off its busy marker (the same `--busy-marker` / `TAC_BUSY_MARKERS` vocabulary Phase 4 uses) rather than `esc to interrupt` alone.
+Never send recovery Enter blind: the first send may have flipped the pane into a blocked dialog, and bare Enter would answer *that* dialog.
+
+## Pre-send baseline + split completion marker
+
+Two races without them:
+
+1. **Fast completion** — agent finishes before `wait_for_idle.py` takes its own baseline snapshot → wait times out on a finished task, or delta is empty.
+2. **Prompt echo** — the typed task appears in the transcript and stabilizes → content-stability thinks the reply is done.
+
+Contract:
+
+```bash
+baseline_file="$(mktemp)"
+tmux capture-pane -t "$target" -p -S -80 >"$baseline_file"
+suffix="$(date +%s)_$$_$RANDOM"
+completion_marker="TAC_DONE_$suffix"
+task="…real work…
+
+After fully finishing, concatenate and print these two parts without spaces: TAC_DONE_ and $suffix"
+# preflight → send → delivery check →
+python3 "$here/wait_for_idle.py" "$target" --timeout 180 --scrollback 80 \
+  --baseline-file "$baseline_file" --completion-marker "$completion_marker"
+rc=$?; rm -f "$baseline_file"
+```
+
+- Split the marker in the prompt so echo never contains the joined form.
+- Only a **fresh** marker (present in current, **absent from baseline**) proves THIS send finished.
+- A stale marker left from a prior task must not satisfy the new wait.
+
+### Wait modes
+
+| Mode | Flag | Behavior |
+|---|---|---|
+| Post-send (default) | (none) | Requires saw_work (busy chrome / transcript change) **or** fresh completion marker before idle success |
+| Boot / ready | `--ready` | Accepts already-idle; still returns 3 on blocked dialogs |
+| Marker-required | `--completion-marker` | Quiet prompt echo alone never completes |
+
+Exit codes: **0** settled, **1** error, **2** timeout, **3** blocked.
 
 ## Why the helper's verdict is advisory
 
-`wait_for_idle.py` exit 0 means *the pane stopped changing*, which is usually "done" but can also be a paused agent or a UI that quiesced mid-task. Content stability is the universal signal (works for any CLI agent); spinner chrome (`esc to interrupt`) and dialog text only refine the verdict.
+`wait_for_idle.py` exit 0 means *the pane stopped changing under the mode rules above*, which is usually "done" but can also be a paused agent or a UI that quiesced mid-task. Content stability is the universal signal (works for any CLI agent); spinner chrome and dialog text only refine the verdict.
 
-When the verdict matters (before relaying a result the user will act on, or on any exit-2 timeout), do an **independent, human-style read** — capture the pane yourself and look at the actual content — rather than trusting the exit code alone:
+When the verdict matters (before relaying a result the user will act on, or on any exit-2 timeout), do an **independent, human-style read**:
 
 ```bash
-tmux capture-pane -t agent1 -p -S -40        # bounded tail: ~40 scrollback lines + visible pane
+tmux capture-pane -t agent1 -p -S -40
 ```
 
-This distinguishes the third failure mode (a stalled agent) from a working one — separate from a dropped delivery (Phase 3) and a reply timeout (exit 2):
+Third failure mode (stalled agent) vs working:
 
-- **Still working:** a spinner / `esc to interrupt` is showing, or the tail differs from a capture you took moments ago → keep waiting; **don't send a new message yet**.
-- **Stuck / stalled:** the pane is unchanged across reads, with no spinner and no completion (no prompt returned, answer never finished) → it won't resolve on its own. Surface it to the user; do not silently re-wait.
+- **Still working:** spinner / `esc to interrupt`, or tail differs from a capture moments ago → keep waiting; **don't send**.
+- **Stuck / stalled:** unchanged across reads, no spinner, no completion → surface it; do not silently re-wait.
+
+## Concurrent fleet waits
+
+Capture every baseline first, preflight, send all with markers, then wait concurrently. Prefer `scripts/broadcast.sh` — it:
+
+1. Dedupes targets and verifies `has-session`
+2. Fail-closed preflight (skip working / blocked / unverifiable)
+3. Snapshots baselines
+4. Re-preflights immediately before each dispatch
+5. Fans out split markers + task text
+6. Waits concurrently with `--baseline-file` + `--completion-marker`
+7. Aggregates SEND-FAILED / BECAME-UNSAFE / waiter codes into exit 1
+
+Manual pattern only if the script is unavailable — never serialize full send→wait→read per agent.
+
+## Follow-ups
+
+Every steer/follow-up is a **new** Phase 3→4 cycle: new baseline file, new marker suffix, new preflight. Phase 4 deletes the previous baseline; the previous joined marker is already in the transcript.
 
 ## Anti-deadloop — bound the whole loop, not just one wait
 
-`--timeout` caps a **single** call; the real risk is a re-wait / re-send loop (Phase 4 and Phase 6 "Continue") that polls forever. Set a **hard overall budget** before you start — a small number of re-waits (e.g. 2–3) or a total wall-clock cap — and when it's spent, **stop and escalate to the user** with what you observed (last capture, how long you waited). Never poll indefinitely and never auto-re-send past the cap; an agent that hasn't settled within the budget is a stall to report, not a loop to keep running.
+| Budget | Suggested default |
+|---|---|
+| Boot to ready (`--ready`) | 60s |
+| Delivery activity check | ~5s once (+ one recovery Enter) |
+| Task completion | 180s (tune per task) |
+| Re-waits after timeout | max 2–3, then escalate |
+
+`--timeout` caps a **single** call; the real risk is a re-wait / re-send loop that polls forever. When the overall budget is spent, **stop and escalate** with last capture and how long you waited. Never poll indefinitely and never auto-re-send past the cap.
 
 ### Manual fallback (no Python / restricted env)
 
-Capture, `sleep 3`, capture again, compare — under the same overall budget. Matching captures with no spinner = done. A spinner or `esc to interrupt` still showing → wait and re-capture; **don't send a new message yet**. If the budget runs out with no resolution, stop and surface it.
+Capture, `sleep 3`, capture again, compare — under the same overall budget. Matching captures with no spinner = done. A spinner or `esc to interrupt` still showing → wait and re-capture; **don't send a new message yet**. If the budget runs out with no resolution, stop and surface it. Without preflight/marker helpers you lose fail-closed dialog protection — prefer installing Python for the scripts.

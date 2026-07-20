@@ -2,23 +2,40 @@
 
 Patterns the SKILL.md points to when a task goes beyond the basic send → wait → capture loop. Read the relevant section when you hit that case; you don't need all of it at once.
 
+## Resolve scripts/
+
+Prefer probing install locations over `scripts/...` relative to cwd (see SKILL.md "Resolve scripts/"). Examples below assume `$here` already points at the skill's `scripts/` directory.
+
+## Concurrent readiness pass (after fleet spawn)
+
+Spawn every session first, then wait **concurrently** with `--ready`. Abort if any pane is blocked or timed out — do not assign work to a half-ready fleet:
+
+```bash
+ready_failed=0; rpids=()
+for s in myrepo-reviewer myrepo-tests myrepo-docs; do
+  python3 "$here/wait_for_idle.py" "$s" --ready --timeout 60 --no-print &
+  rpids+=("$!:$s")
+done
+for e in "${rpids[@]}"; do
+  jp="${e%%:*}"; sess="${e#*:}"
+  wait "$jp" || { rc=$?; ready_failed=1; echo "$sess: not ready (rc $rc)" >&2; }
+done
+[ "$ready_failed" -eq 0 ] || { echo "Fleet not ready; not assigning work." >&2; exit 1; }
+```
+
+`--ready` accepts already-idle boots. A bare post-send wait would treat pre-task idle as "not yet worked" and hang until timeout.
+
 ## Broadcast to multiple agents
 
-Send one instruction to a fleet and collect each reply. Use the bundled script — it sends to every session first, then waits on all of them **concurrently** (each reply settles in its own background process), so wall-clock is the slowest single agent, not the sum:
+Send one instruction to a fleet and collect each reply. Use the bundled script — it **preflights** (skips busy/blocked/unverifiable), captures **baselines**, injects **split completion markers**, sends to every safe session first, then waits on all of them **concurrently**, so wall-clock is the slowest single agent, not the sum:
 
 ```bash
-TAC_TIMEOUT=180 bash scripts/broadcast.sh "pull latest main and report status" myrepo-reviewer myrepo-tests myrepo-docs
+TAC_TIMEOUT=180 bash "$here/broadcast.sh" "pull latest main and report status" myrepo-reviewer myrepo-tests myrepo-docs
 ```
 
-It prints one labeled block per agent with the reply delta and a state tag (`idle` / `TIMEOUT` / `BLOCKED`), and exits non-zero if any agent timed out or is blocked. `TAC_WAIT_ARGS` passes extra flags to the waiter (e.g. `TAC_WAIT_ARGS=--full`).
+It prints one labeled block per agent with the reply delta and a state tag (`idle` / `TIMEOUT` / `BLOCKED` / `SEND-FAILED` / `BECAME-UNSAFE`), and exits non-zero if any agent timed out, is blocked, was skipped, or failed dispatch. Env knobs: `TAC_TIMEOUT`, `TAC_SCROLLBACK` (default 80), `TAC_WAIT_ARGS` (e.g. `--full`).
 
-**Wait for boot before the first broadcast.** Freshly spawned agents may still be on a splash or trust prompt. Confirm each is ready first (exit 0, not 3):
-
-```bash
-for s in myrepo-reviewer myrepo-tests myrepo-docs; do python3 scripts/wait_for_idle.py "$s" --timeout 30 --no-print; echo "$s ready=$?"; done
-```
-
-If `broadcast.sh` is unavailable, fan the message out in one loop, then wait in a **second** loop (never one combined loop — that serializes the waits behind each send).
+**Wait for boot before the first broadcast** (concurrent readiness pass above). If `broadcast.sh` is unavailable, still: preflight each target → capture baselines → fan sends with markers in one loop → wait in a **second** concurrent loop (never one combined loop — that serializes the waits behind each send).
 
 ## Periodic fleet status during long runs
 

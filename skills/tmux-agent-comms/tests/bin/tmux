@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Thin wrapper so PATH can point at a real `tmux` binary that is our fake.
+exec python3 "$(cd "$(dirname "$0")/.." && pwd)/fake_tmux.py" "$@"

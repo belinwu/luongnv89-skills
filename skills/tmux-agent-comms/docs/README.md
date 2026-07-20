@@ -13,9 +13,9 @@
 
 - **Launch sessions** — create predictable tmux sessions (`<folder>-<short-task-name>`) and boot an agent (Claude Code, Gemini CLI, Codex, pi-agent, any CLI) inside each, opening new sessions in a terminal tab inside the current app by default.
 - **Start non-blocking by default** — open a visible app tab when available, then continue readiness checks; use `TAC_STARTUP_MODE` or a per-launch request to opt into interactive-only startup when needed.
-- **Message any agent** — send a prompt to a target session with proper escaping, including the separate-`Enter` gotcha for stubborn TUIs.
-- **Read replies reliably** — a bundled `wait_for_idle.py` polls the pane until output settles instead of guessing with a fixed `sleep`, then returns the answer.
-- **Broadcast & collect** — fan one instruction out to several agents and gather each reply, with periodic fleet status during long-running work.
+- **Message any agent** — fail-closed preflight (busy/blocked), escaped `send-keys` + separate Enter, delivery check vs pre-send baseline.
+- **Read replies reliably** — `wait_for_idle.py` with optional `--baseline-file`, `--completion-marker`, and `--ready` (not a fixed `sleep`).
+- **Broadcast & collect** — preflight + baselines + split markers + concurrent waits; periodic fleet status during long-running work.
 - **Status & inspect** — list every managed agent in a table, inspect one agent, and get the exact attach command for a human terminal.
 - **Keep agents visible** — new sessions attach to a fresh terminal tab in the current app by default; detached mode remains available for background fleets or environments without a terminal-tab facility.
 - **Safe teardown** — kill individual sessions (or the whole server) behind explicit user confirmation, so no agent's work is lost by accident.
@@ -36,9 +36,9 @@
 ```mermaid
 graph TD
     A["Create/discover named sessions"] --> B["Resolve exact target (has-session)"]
-    B --> C["Send message (escaped + Enter)"]
+    B --> C["Preflight + baseline + send"]
     B --> S["Status / inspect (read-only)"]
-    C --> D["Wait until pane settles (wait_for_idle.py)"]
+    C --> D["Wait with marker (wait_for_idle.py)"]
     D --> E["Capture & relay reply"]
     E --> F["Continue, report fleet status, or tear down (confirmed)"]
     style A fill:#2E7D32,color:#fff
