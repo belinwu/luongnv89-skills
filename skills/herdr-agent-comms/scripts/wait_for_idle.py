@@ -21,6 +21,8 @@ Usage:
 
 Options:
     --timeout SEC        give up after this many seconds (default: 120)
+    --baseline-file PATH use a pre-send pane-read capture as the baseline
+    --completion-marker S require S when working transition was missed
     --quiet-cycles N     consecutive unchanged reads to call it settled (default: 3)
     --interval SEC       seconds between captures (default: 2)
     --lines N            pane read line window (default: 60)
@@ -58,8 +60,11 @@ def resolve_pane(target: str) -> str:
         if cp.returncode == 0:
             try:
                 d = json.loads(cp.stdout)
+                # A null/non-object `pane` (e.g. {"result":{"pane":null}}) makes
+                # the subscript raise TypeError — catch it and fall through to
+                # the `agent get` path rather than crash with a traceback.
                 return d["result"]["pane"]["pane_id"]
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
     cp = run(["herdr", "agent", "get", target])
@@ -70,7 +75,7 @@ def resolve_pane(target: str) -> str:
             pane = agent.get("pane_id")
             if pane:
                 return pane
-        except (json.JSONDecodeError, AttributeError, KeyError):
+        except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
             pass
 
     cp = run(["herdr", "agent", "list"])
@@ -96,18 +101,91 @@ def resolve_pane(target: str) -> str:
     raise SystemExit(f"target not found: {target!r}")
 
 
-def agent_status(pane_id: str) -> str | None:
+# Distinct sentinel for a FAILED/unparseable `herdr pane get`, kept separate
+# from a valid-but-absent status ("unknown"). Conflating the two is a
+# fail-open bug: a persistent lookup failure on a `blocked` pane would look
+# like "no status → fall back to content-stability → report ready". Callers
+# must treat LOOKUP_FAILED as unverifiable (an error under --ready), while a
+# genuine "unknown" (non-integrated CLI) still uses the content-stability path.
+LOOKUP_FAILED = "\x00lookup-failed"
+
+# The documented agent-status enum. ANY other value — a number, an empty
+# string, a typo, an out-of-band string the server invents — is unverifiable,
+# NOT a benign "unknown". Accepting arbitrary truthy values fails open: a
+# numeric `123` status would sail past the working/blocked checks and be
+# treated as sendable/settled. Absent/null still maps to "unknown" (the
+# non-integrated-CLI case); everything off-enum maps to LOOKUP_FAILED so it is
+# rejected on --ready and routed to content-stability (which needs real work
+# before it settles) on a normal wait.
+VALID_STATUSES = frozenset({"idle", "working", "blocked", "done", "unknown"})
+
+
+def normalize_status(raw: object) -> str:
+    """Map a raw agent_status value onto the documented enum.
+
+    absent/null   -> "unknown"        (verifiable; non-integrated CLI)
+    in the enum   -> that status
+    anything else -> LOOKUP_FAILED    (wrong type, empty string, off-enum)
+    """
+    if raw is None:
+        return "unknown"
+    if isinstance(raw, str) and raw in VALID_STATUSES:
+        return raw
+    return LOOKUP_FAILED
+
+
+def agent_status(pane_id: str) -> str:
+    """Return the pane's agent status (a member of VALID_STATUSES), or
+    LOOKUP_FAILED if the `herdr pane get` call failed, didn't parse, or
+    reported a value outside the documented enum."""
     cp = run(["herdr", "pane", "get", pane_id])
     if cp.returncode != 0:
-        return None
+        return LOOKUP_FAILED
     try:
-        d = json.loads(cp.stdout)
-        return d["result"]["pane"].get("agent_status")
-    except (json.JSONDecodeError, KeyError):
-        return None
+        pane = json.loads(cp.stdout)["result"]["pane"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return LOOKUP_FAILED
+    # A valid JSON body can still carry a null / non-object `pane` (e.g.
+    # {"result": {"pane": null}}); calling .get() on that raises AttributeError.
+    # Treat a non-mapping pane as unverifiable rather than crashing.
+    if not isinstance(pane, dict):
+        return LOOKUP_FAILED
+    return normalize_status(pane.get("agent_status"))
 
 
-def pane_read(pane_id: str, lines: int) -> str:
+def _unverifiable(st: str, args) -> bool:
+    """True when a status result is UNVERIFIABLE and that must fail a readiness
+    check — i.e. the lookup failed AND we're doing a status-based `--ready`
+    wait. This is checked after EVERY `agent_status` call (not just the first)
+    so a valid status followed by a later lookup failure cannot slip through a
+    loop and return a false ready. A valid "unknown" is verifiable and never
+    trips this; non-ready waits and --no-prefer-status are unaffected."""
+    return args.ready and args.prefer_status and st == LOOKUP_FAILED
+
+
+def extract_pane_text(out: str) -> str:
+    """Normalize either raw text or `herdr pane read` JSON to transcript text."""
+    try:
+        d = json.loads(out)
+        r = d.get("result", d)
+        for key in ("text", "content", "output", "data"):
+            if isinstance(r.get(key), str):
+                return r[key]
+        if isinstance(r.get("lines"), list):
+            return "\n".join(str(x) for x in r["lines"])
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return out
+
+
+def pane_read(pane_id: str, lines: int) -> str | None:
+    """Read a pane's transcript, or None if the read command FAILED.
+
+    A failed read (e.g. the pane disappeared mid-wait) must NOT be treated as
+    transcript content: the error text would stabilize like any other output
+    and trip a false "completion". Returning None lets callers propagate the
+    failure as an error/timeout instead of a spurious success.
+    """
     cp = run(
         [
             "herdr",
@@ -121,19 +199,8 @@ def pane_read(pane_id: str, lines: int) -> str:
         ]
     )
     if cp.returncode != 0:
-        return cp.stdout or cp.stderr or ""
-    out = cp.stdout or ""
-    try:
-        d = json.loads(out)
-        r = d.get("result", d)
-        for key in ("text", "content", "output", "data"):
-            if isinstance(r.get(key), str):
-                return r[key]
-        if isinstance(r.get("lines"), list):
-            return "\n".join(str(x) for x in r["lines"])
-    except json.JSONDecodeError:
-        pass
-    return out
+        return None
+    return extract_pane_text(cp.stdout)
 
 
 def wait_status(pane_id: str, status: str, timeout_ms: int) -> bool:
@@ -170,6 +237,14 @@ def main() -> int:
     )
     ap.add_argument("target", help="pane id or agent name")
     ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument(
+        "--baseline-file",
+        help="pre-send `herdr pane read` capture; closes the fast-completion race",
+    )
+    ap.add_argument(
+        "--completion-marker",
+        help="marker the agent prints only after finishing the task",
+    )
     ap.add_argument("--quiet-cycles", type=int, default=3)
     ap.add_argument("--interval", type=float, default=2.0)
     ap.add_argument("--lines", type=int, default=60)
@@ -206,13 +281,29 @@ def main() -> int:
         return 1
 
     deadline = time.time() + args.timeout
-    baseline = pane_read(pane_id, args.lines)
+    if args.baseline_file:
+        try:
+            with open(args.baseline_file, encoding="utf-8") as f:
+                baseline = extract_pane_text(f.read())
+        except OSError as e:
+            print(f"Error: could not read baseline file: {e}", file=sys.stderr)
+            return 1
+    else:
+        baseline = pane_read(pane_id, args.lines)
+        if baseline is None:
+            print(f"Error: could not read pane {pane_id} for baseline", file=sys.stderr)
+            return 1
     saw_work = False  # working status or transcript change
+    saw_working = False  # authoritative working transition
 
     st = agent_status(pane_id)
+    # Fail closed on an unverifiable status for a --ready wait (see _unverifiable).
+    if _unverifiable(st, args):
+        print(f"Error: cannot verify readiness of {pane_id} (status lookup failed)", file=sys.stderr)
+        return 1
     if st == "blocked":
         if not args.no_print:
-            print(baseline if args.full else "")
+            print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
         return 3
 
     if args.ready and st in ("idle", "done") and args.prefer_status:
@@ -220,40 +311,87 @@ def main() -> int:
             print_delta(baseline, baseline, args.full)
         return 0
 
-    if args.prefer_status and st not in (None, "unknown"):
+    # `unknown` (validly absent status) → content-stability fallback below.
+    # LOOKUP_FAILED under --ready was already rejected; for a non-ready wait it
+    # also falls through to content-stability (which reads the transcript and
+    # will itself error if the pane is gone).
+    if args.prefer_status and st not in ("unknown", LOOKUP_FAILED):
         while time.time() < deadline:
             st = agent_status(pane_id)
+            if _unverifiable(st, args):
+                print(f"Error: readiness of {pane_id} became unverifiable (status lookup failed)", file=sys.stderr)
+                return 1
             if st == "blocked":
                 if not args.no_print:
-                    print_delta(baseline, pane_read(pane_id, args.lines), args.full)
+                    print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
                 return 3
 
             if st == "working":
                 saw_work = True
-                slice_ms = min(30_000, max(1, int((deadline - time.time()) * 1000)))
-                # Prefer short waits so we can notice idle or done either way
-                half = max(1, slice_ms // 2)
-                if not wait_status(pane_id, "done", half):
-                    wait_status(pane_id, "idle", max(1, int((deadline - time.time()) * 1000)))
+                saw_working = True
+                # Single bounded wait, then loop back so the top-of-loop
+                # re-read + the `st in ("idle", "done")` branch handle whichever
+                # terminal state we reach. `wait done` returns the instant the
+                # pane goes `done`, so a working -> done settle is caught fast;
+                # a working -> idle settle is caught by the re-read after the
+                # slice expires (idle hits the same terminal branch). The cap
+                # (min 1s) is load-bearing: control MUST return to the re-read
+                # before the deadline. The old code did a SECOND wait — for
+                # `idle`, over the whole remaining deadline — so a pane that
+                # settled on `done` (never `idle`) blocked there until timeout
+                # and returned code 2 even though it had finished.
+                slice_ms = max(1, min(1_000, int((deadline - time.time()) * 1000)))
+                wait_status(pane_id, "done", slice_ms)
                 continue
 
             if st in ("idle", "done"):
                 cur = pane_read(pane_id, args.lines)
+                if cur is None:
+                    # Pane vanished while we were reading it — a failed read is
+                    # not a completed task. Report an error, not success.
+                    print(f"Error: pane {pane_id} read failed (pane gone?)", file=sys.stderr)
+                    return 1
                 if cur != baseline:
                     saw_work = True
-                if saw_work or args.ready:
+                marker_seen = (
+                    args.completion_marker is not None
+                    and args.completion_marker in cur
+                    and args.completion_marker not in baseline
+                )
+                if args.ready:
                     if not args.no_print:
                         print_delta(baseline, cur, args.full)
                     return 0
+                if args.completion_marker is not None:
+                    # Marker mode: only a fresh marker (absent from baseline) proves
+                    # THIS send finished. A stale `saw_working` from a pane that was
+                    # already busy before this send must not short-circuit success.
+                    if marker_seen:
+                        if not args.no_print:
+                            print_delta(baseline, cur, args.full)
+                        return 0
+                    # Not seen yet: keep waiting (fall through to re-poll below).
+                elif saw_working:
+                    if not args.no_print:
+                        print_delta(baseline, cur, args.full)
+                    return 0
+                elif saw_work:
+                    # Legacy fallback when no marker was arranged before send.
+                    break
                 # Pre-task idle: wait for working (or transcript change via status loop)
                 slice_ms = min(5_000, max(1, int((deadline - time.time()) * 1000)))
                 if wait_status(pane_id, "working", slice_ms):
                     saw_work = True
+                    saw_working = True
                     continue
-                # Also check blocked while waiting to start
-                if agent_status(pane_id) == "blocked":
+                # Also check blocked while waiting to start.
+                st = agent_status(pane_id)
+                if _unverifiable(st, args):
+                    print(f"Error: readiness of {pane_id} became unverifiable (status lookup failed)", file=sys.stderr)
+                    return 1
+                if st == "blocked":
                     if not args.no_print:
-                        print_delta(baseline, pane_read(pane_id, args.lines), args.full)
+                        print_delta(baseline, pane_read(pane_id, args.lines) or "", args.full)
                     return 3
                 continue
 
@@ -268,13 +406,34 @@ def main() -> int:
     while time.time() < deadline:
         time.sleep(args.interval)
         st = agent_status(pane_id)
+        # A --ready wait that reaches here started from a valid "unknown"; if a
+        # LATER lookup fails we can no longer verify readiness, so fail closed
+        # rather than let content stability report a false ready (the round-9
+        # repro: valid unknown, then lookup failure).
+        if _unverifiable(st, args):
+            print(f"Error: readiness of {pane_id} became unverifiable (status lookup failed)", file=sys.stderr)
+            return 1
         if st == "blocked":
             if not args.no_print:
                 print_delta(baseline, last, args.full)
             return 3
         if st == "working":
             saw_work = True
+            saw_working = True
         cur = pane_read(pane_id, args.lines)
+        if cur is None:
+            # Pane disappeared mid-wait — do NOT let a failed read stabilize
+            # into a false completion. Surface it as an error.
+            print(f"Error: pane {pane_id} read failed (pane gone?)", file=sys.stderr)
+            return 1
+        if (
+            args.completion_marker
+            and args.completion_marker in cur
+            and args.completion_marker not in baseline
+        ):
+            if not args.no_print:
+                print_delta(baseline, cur, args.full)
+            return 0
         if cur != last:
             if cur != baseline:
                 saw_work = True
@@ -284,6 +443,10 @@ def main() -> int:
         quiet += 1
         if quiet >= args.quiet_cycles:
             if st == "working":
+                quiet = 0
+                continue
+            if args.completion_marker and not args.ready:
+                # Marker-enabled sends never infer completion from quiet prompt echo.
                 quiet = 0
                 continue
             if not saw_work and not args.ready:

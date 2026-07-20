@@ -4,62 +4,204 @@ Read this when you need layout variants, multi-line sends, human steer/focus, sc
 
 ## Default fleet layout (this skill)
 
-**One fleet tab, split pane per agent** — all agents visible in a single view:
+**Root + sub-agents as equal-width columns in one tab:**
 
 ```
 Session (default)
-└── Workspace: <project>                 ← one per repo
-    └── Tab: fleet
-        ├── pane wN:pA  agent "reviewer"
-        ├── pane wN:pB  agent "tests"     (split right)
-        └── pane wN:pC  agent "docs"      (split down)
+└── Workspace: <project>
+    └── Tab: <root's tab>                          ← single row of columns
+        ┌───────────┬───────────┬───────────┐
+        │ root (you)│ reviewer  │ tests      │
+        └───────────┴───────────┴───────────┘
 ```
 
-Why splits by default: the human sees the whole fleet without switching tabs; sidebar still rolls status up per workspace. Use tab-per-agent only when the user wants a full viewport per agent.
+(`next_grid_split.py` always targets the current rightmost column for the
+split, then its `--equalize` pass re-converges every column to the same
+width no matter how many are spawned — never a wide root next to narrow
+workers, or vice versa. Columns end equal within ~1 terminal cell.)
 
-### Create workspace + three-agent fleet (splits)
+Why this default: the human sees the **root agent and every sub-agent at the
+same size**; the orchestrator is never displaced into a side tab or left
+oddly wide/narrow; sidebar still rolls status per workspace.
+
+### Spawn N sub-agents into an equal-width grid
+
+Use `scripts/next_grid_split.py` for every spawn: the default run emits the
+split line targeting the **current rightmost column** (`--ratio 1/N`, so the
+new right pane lands on the `1/N` equal target — see "Split ratio" below),
+and `--equalize` runs the live iterative equalizer that re-converges every
+column (including root) to the same width. `--equalize` is a **hard gate**:
+it exits non-zero on a resize failure or non-convergence, and the spawn
+helper below aborts rather than launch a worker into an uneven layout.
 
 ```bash
-project_dir=/path/to/project
-label=$(basename "$project_dir")
-ws=$(herdr workspace create --cwd "$project_dir" --label "$label" --no-focus \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["workspace"]["workspace_id"])')
+root_pane="${HERDR_PANE_ID:?}"
+root_tab="${HERDR_TAB_ID:?}"
+ws="${HERDR_WORKSPACE_ID:?}"
+project_dir=$(pwd)
+# Resolve scripts/ by probing known install locations. Don't derive from
+# $0/BASH_SOURCE here — unreliable when an agent runs this inline rather
+# than as a saved script file. Repo-local copies win over global installs
+# so a pinned repo checkout isn't silently overridden by whatever version
+# happens to be installed globally.
+here=""
+for cand in \
+  "skills/herdr-agent-comms/scripts" \
+  ".agents/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+  if [ -f "$cand/next_grid_split.py" ]; then here="$cand"; break; fi
+done
+[ -n "$here" ] || { echo "Error: next_grid_split.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
 
-tab_json=$(herdr tab create --workspace "$ws" --cwd "$project_dir" --label fleet --no-focus)
-fleet_tab=$(printf '%s' "$tab_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')
-root=$(printf '%s' "$tab_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')
+# Canonical guarded spawn: every critical step is checked, the pane id is
+# printed ONLY after the launch (`pane run`) succeeds, and any failure returns
+# non-zero (naming the orphan split pane) so the caller can abort. Note the
+# `local` declarations are separate from the assignments — `local pane=$(...)`
+# would mask the substitution's exit status.
+#
+# Readiness is NOT waited on here: a single `wait agent-status idle` would
+# turn a `blocked` boot (trust/auth dialog) into a generic 60s timeout and
+# serialize the fleet. Placement and readiness are separated — see the
+# concurrent readiness pass after all spawns below.
+spawn_sub() {
+  local name=$1 cmd=$2
+  local plan split_from ratio j pane
+  herdr agent list | grep -q "\"name\":\"$name\"" && name="${name}-$(date +%s)"
+  # plan line: "split <rightmost> right --ratio <1/N>" (new right pane -> 1/N target)
+  plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane") || {
+    echo "Error: planning split failed for '$name' (bad/unsupported layout?)." >&2; return 1; }
+  read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
+  [ -n "$split_from" ] && [ -n "$ratio" ] || {
+    echo "Error: empty plan for '$name'; refusing to split." >&2; return 1; }
+  j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus) || {
+    echo "Error: 'herdr pane split $split_from' failed for '$name'." >&2; return 1; }
+  pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])') || {
+    echo "Error: could not parse pane id from split output for '$name'." >&2; return 1; }
+  [ -n "$pane" ] || { echo "Error: empty pane id for '$name'." >&2; return 1; }
+  # Equalize all columns — HARD GATE: on failure return non-zero WITHOUT
+  # launching or printing a pane id, so the caller aborts (no `|| true`).
+  if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane" >&2; then
+    echo "Error: equalize failed for '$name'; orphan split pane $pane not launched. 'herdr pane close $pane' to undo." >&2
+    return 1
+  fi
+  herdr pane rename "$pane" "$name" >/dev/null || { echo "Error: rename failed; orphan $pane." >&2; return 1; }
+  herdr agent rename "$pane" "$name" >/dev/null || { echo "Error: agent rename failed; orphan $pane." >&2; return 1; }
+  herdr pane run "$pane" "$cmd" >/dev/null || { echo "Error: launch failed; orphan $pane." >&2; return 1; }
+  printf '%s\n' "$pane"   # ONLY after the launch above succeeded
+}
 
-# Agent 1 on root pane
-herdr pane rename "$root" reviewer
-herdr agent rename "$root" reviewer
-herdr pane run "$root" "pi --thinking medium"
+# Caller MUST check the status — `$(...)` hides spawn_sub's non-zero exit, so
+# a failed equalize would otherwise be ignored and the next spawn would build
+# on a broken layout. Abort the whole fleet spawn if any placement fails.
+p_reviewer=$(spawn_sub reviewer "pi --thinking medium") || { echo "reviewer failed to place; aborting" >&2; exit 1; }
+p_tests=$(spawn_sub tests "pi --thinking low") || { echo "tests failed to place; aborting" >&2; exit 1; }
+# optional third: p_docs=$(spawn_sub docs "pi --thinking low") || { echo "docs failed; aborting" >&2; exit 1; }
 
-# Agent 2 / 3 via agent start + split (same tab)
-herdr agent start tests --cwd "$project_dir" --workspace "$ws" --tab "$fleet_tab" \
-  --split right --no-focus -- pi --thinking low
-herdr agent start docs --cwd "$project_dir" --workspace "$ws" --tab "$fleet_tab" \
-  --split down --no-focus -- pi --thinking low
-
-herdr tab focus "$fleet_tab"   # show the whole board
+# Concurrent readiness pass — run AFTER all spawns so boot waits overlap.
+# `wait_for_idle.py --ready` returns 0 ready, 2 timeout, 3 BLOCKED — so a
+# trust/auth dialog is surfaced immediately instead of hiding behind a 60s
+# idle timeout (the reason a bare `wait agent-status idle` was wrong here).
+fleet=("$p_reviewer" "$p_tests")   # add "$p_docs" if spawned
+rpids=()
+for p in "${fleet[@]}"; do
+  python3 "$here/wait_for_idle.py" "$p" --ready --timeout 60 --no-print &
+  rpids+=("$!:$p")
+done
+ready_failed=0
+for e in "${rpids[@]}"; do
+  jp="${e%%:*}"; pane="${e#*:}"
+  if wait "$jp"; then echo "$pane: ready"
+  else rc=$?
+    ready_failed=1   # any non-ready sub-agent fails the whole fleet spawn
+    case "$rc" in 3) echo "$pane: BLOCKED — a human must answer a dialog" >&2 ;;
+                  2) echo "$pane: not ready within 60s (timeout)" >&2 ;;
+                  *) echo "$pane: readiness check failed (rc $rc)" >&2 ;; esac
+  fi
+done
+# Do NOT assign work if any agent isn't ready — abort so a blocked/timed-out
+# pane never receives a task (a bare readiness loop that only echoes would let
+# the caller proceed as if the fleet were up).
+[ "$ready_failed" -eq 0 ] || { echo "Fleet not fully ready; aborting before task assignment." >&2; exit 1; }
 ```
 
-### Split direction heuristics
+### Grid heuristics
 
-| Situation | Direction |
+| Step | Rule |
 |---|---|
-| 2 agents | first extra: `right` |
-| 3 agents | `right` then `down` |
-| Wide pane | prefer `right` |
-| Tall/narrow pane | prefer `down` |
-| Unknown geometry | alternate `right`, `down`, `right`, … |
-
-Inspect geometry when available:
+| Target pane | current rightmost column (`rect.x` order) |
+| Direction | always `right` — one row of columns, never `down` |
+| Split ratio | `1/N` (the planner emits it) — `--ratio R` is the existing/left child's share, so the new right pane gets `1-R = (N-1)/N` of the split column = the `1/N` equal target of the tab |
+| After each spawn | run `--equalize` — a split alone can't shrink the pre-existing columns |
+| Re-run per spawn | never hardcode a fixed ratio — it shrinks every time |
+| Focus | always `--no-focus` |
 
 ```bash
-herdr pane layout --pane "$pane_id"
+# $here from the resolver above (or re-probe if starting fresh in this shell)
+python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane"
+herdr pane layout --pane "$root_pane"   # verify near-equal-width rects
 ```
 
-Avoid repeating the same direction for every split (creates unusable slivers).
+Manual fallback without the helper: read `herdr pane layout`, order panes by `rect.x`, split the rightmost one `right`, then hand-run the equalizer — see "Equal-width columns — verified semantics" below.
+
+### Prefer grid split over `agent start`
+
+| Command | When |
+|---|---|
+| `next_grid_split.py` split + `--equalize` … `--no-focus` | **Default** — equal-width grid including root |
+| `herdr agent start name --tab "$root_tab" --split right --no-focus -- …` | OK if you only care about same tab; leaves unequal widths unless you run `--equalize` afterward |
+
+### Equal-width columns — verified semantics
+
+These were confirmed **live against herdr 0.7.4**; the CLI has no `--help`, so
+run experiments in a throwaway `herdr tab create` and read `herdr pane layout`
+before/after (close the probe tab when done — never probe the session's own
+tab). Results:
+
+- **`pane split <p> --direction right --ratio R`** — `R` is the fraction the
+  **existing (left) child** keeps of the pane `p`; the new (right) pane gets
+  `1 - R`. It resizes only `p`; the other columns are untouched. So a single
+  split can never equalize `N >= 3` columns. (`--ratio 0.5` on a 210-cell tab
+  → 105/105.) To add column N we split the rightmost column at **`R = 1/N`**:
+  when the N-1 existing columns are equal, the rightmost is `1/(N-1)` of the
+  tab, so the new pane's `(1-R) = (N-1)/N` share of it equals `1/N` of the
+  whole tab — the equal target. Verified live: from 105/105, splitting the
+  rightmost at `--ratio 0.333` (=1/3) gives a new pane of 70 (= 210/3), i.e.
+  the equal target — NOT 35, which is what the earlier inverted `(N-1)/N`
+  value produced. The equalizer then fixes the disturbed inner columns.
+- **`pane resize --pane P --direction D --amount A`** — `A` is a **delta**, a
+  fraction of the whole tab area width (`A * area_width` cells), *not* an
+  absolute target width. `--direction D` moves the edge on side `D`: a pane
+  with a neighbor on side `D` **grows** toward it; against a wall it shrinks.
+  The freed/absorbed cells redistribute **proportionally** among the panes on
+  the far side of the moved boundary. (Verified: a leftmost pane resized
+  `left 0.1` on a 210 tab shrank by exactly 21 cells, distributed to its
+  right neighbors by their prior widths.)
+- **Consequence:** one left-to-right resize sweep does not land equal (each
+  resize perturbs downstream columns), but the sweep is a *contraction* —
+  iterating it converges. Observed 4-column decay: spread 25 → 13 → 5 → 3 → 1.
+
+**Equalizer algorithm** (`next_grid_split.py --equalize`): compute equal
+integer targets summing to `area_width` (remainder onto the leftmost
+columns); each pass, sweep internal boundaries left to right and move each
+toward its target cumulative position by **growing the neighbor-bearing pane**
+(boundary must move right → `resize left_col right`; must move left →
+`resize right_col left`), re-reading the layout after every resize; repeat
+until the width spread is ≤1 cell (cap 12 passes). Verified end-to-end via the
+script: 2 cols → 105/105, 3 → 70/70/70, 4 → 53/53/52/52, 5 → 42×5. A failed
+`herdr pane resize` (nonzero exit) or non-convergence within the pass cap is a
+**hard error**: `--equalize` exits non-zero with an actionable message naming
+the pane/direction/amount (or the final widths), and the spawn recipes abort
+instead of launching a worker into an uneven layout.
+
+**Manual equalize** (helper unavailable): for a tab of width `W` with `N`
+columns, target each column ≈ `W/N`. Repeat this sweep until widths stop
+changing: for each internal boundary `i` (left to right), if the cumulative
+width left of it is below `(i+1)*W/N`, `herdr pane resize --pane <col i>
+--direction right --amount <deficit/W>`; if above, `herdr pane resize --pane
+<col i+1> --direction left --amount <excess/W>`. Because widths are whole
+cells, columns end equal within ±1 cell (exact only when `W` divides by `N`).
 
 ### When to use tab-per-agent instead
 
@@ -77,16 +219,40 @@ for name in reviewer tests docs; do
 done
 ```
 
-### Adding a log / shell pane beside the fleet
+### Adding a log / shell pane into the grid
 
 ```bash
-herdr agent start logs --cwd "$project_dir" --workspace "$ws" --tab "$fleet_tab" \
-  --split down --no-focus -- bash -lc 'tail -f /tmp/app.log'
+# $here from the resolver above (or re-probe if starting fresh in this shell)
+plan=$(python3 "$here/next_grid_split.py" --root-pane "$root_pane") || { echo "Error: split planning failed." >&2; exit 1; }
+read -r _ split_from _ _ ratio < <(head -1 <<<"$plan")
+[ -n "$split_from" ] && [ -n "$ratio" ] || { echo "Error: empty split plan." >&2; exit 1; }
+j=$(herdr pane split "$split_from" --direction right --ratio "$ratio" --cwd "$project_dir" --no-focus) || { echo "Error: pane split failed." >&2; exit 1; }
+pane=$(printf '%s' "$j" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["result"]; print((r.get("pane") or r)["pane_id"])') || { echo "Error: could not parse pane id." >&2; exit 1; }
+[ -n "$pane" ] || { echo "Error: empty pane id." >&2; exit 1; }
+# Equalize all columns — HARD GATE: abort (and close the orphan pane) rather
+# than run the log tail into an uneven layout.
+if ! python3 "$here/next_grid_split.py" --equalize --root-pane "$root_pane"; then
+  echo "Error: equalize failed; not launching log pane. Orphan: $pane (herdr pane close $pane to undo)." >&2
+  herdr pane close "$pane" >/dev/null 2>&1 || true
+  exit 1
+fi
+herdr pane rename "$pane" logs || { echo "Error: rename failed; orphan $pane." >&2; exit 1; }
+herdr pane run "$pane" "bash -lc 'tail -f /tmp/app.log'" || { echo "Error: launch failed; orphan $pane." >&2; exit 1; }
 ```
 
 ## Sending multi-line or code-heavy messages
 
-`herdr pane run <pane> <command>` takes one shell-quoted string. Nested quotes and newlines break easily.
+`herdr pane run <pane> <command>` takes one shell-quoted string. Nested quotes and newlines break easily. Each pattern is **self-contained**: it resolves `$here` (the skill's `scripts/` dir) executably, **preflights before the first pane mutation** (so a working/blocked pane is never touched), guards every text-delivery step, then **preflights AGAIN immediately before the guarded Enter** (the pane could have flipped `blocked` in between). Resolve `$here` once first:
+
+```bash
+here=""
+for cand in "skills/herdr-agent-comms/scripts" ".agents/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+  [ -f "$cand/preflight_send.py" ] && { here="$cand"; break; }
+done
+[ -n "$here" ] || { echo "Error: preflight_send.py not found in any known install location" >&2; exit 1; }
+```
 
 **Pattern A — short instruction that reads a file:**
 
@@ -101,22 +267,56 @@ Return only:
 1. bugs
 2. missing tests
 EOF
-herdr pane run "$pane_id" "Read $task_file and follow its instructions. Delete the file when done."
+# One atomic mutation (`pane run` submits + Enter): a single preflight before it.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe to send to (preflight failed) — see stderr" >&2; rm -f "$task_file"; exit 1; }
+herdr pane run "$pane_id" "Read $task_file and follow its instructions. Delete the file when done." \
+  || { echo "send failed for $pane_id" >&2; rm -f "$task_file"; exit 1; }
 ```
 
 **Pattern B — `send-text` then Enter** (when you must avoid shell expansion inside `pane run`):
 
 ```bash
-herdr pane send-text "$pane_id" "line one"
-# For multi-line, prefer Pattern A. send-text is literal; then:
-herdr pane send-keys "$pane_id" enter
+# Preflight BEFORE the first mutation — send-text alters the pane, so a
+# working/blocked pane must be rejected before any text is injected.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
+# Guard send-text: if the text never landed, DO NOT fall through to the Enter.
+herdr pane send-text "$pane_id" "line one" \
+  || { echo "send-text failed for $pane_id — not submitting Enter" >&2; exit 1; }
+# Preflight AGAIN immediately before the Enter (the pane may have flipped
+# `blocked` since the text landed — a bare Enter would answer that dialog).
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe to submit (preflight failed) — see stderr" >&2; exit 1; }
+herdr pane send-keys "$pane_id" enter \
+  || { echo "Enter failed for $pane_id" >&2; exit 1; }
 ```
 
-**Pattern C — agent name:**
+**Pattern C — agent name:** resolve the name to **one** pane id first, then drive that **exact** id for the preflight, the text delivery, and the Enter. Never preflight/Enter a `$pane_id` while delivering text to a bare name — a stale/mismatched id would mutate one pane and submit into another.
 
 ```bash
-herdr agent send reviewer "summarize src/"
-herdr pane send-keys "$pane_id" enter
+# Resolve the agent NAME to a single pane id, then pin every step to it.
+pane_id="$(herdr agent get reviewer 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    a = d.get("result", {}).get("agent") or d.get("result", {})
+    pid = a.get("pane_id")
+except Exception:
+    pid = None
+print(pid or "", end="")')"
+[ -n "$pane_id" ] || { echo "Error: could not resolve agent 'reviewer' to a pane id" >&2; exit 1; }
+# Preflight BEFORE the first mutation — send-text injects into THIS pane.
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe to send to (preflight failed) — see stderr" >&2; exit 1; }
+# Deliver text to the resolved pane id (not the bare name), guarded.
+herdr pane send-text "$pane_id" "summarize src/" \
+  || { echo "send-text failed for $pane_id — not submitting Enter" >&2; exit 1; }
+# Preflight AGAIN immediately before the submitting Enter (same pane id).
+python3 "$here/preflight_send.py" "$pane_id" >/dev/null \
+  || { echo "Error: $pane_id not safe to submit (preflight failed) — see stderr" >&2; exit 1; }
+herdr pane send-keys "$pane_id" enter \
+  || { echo "Enter failed for $pane_id" >&2; exit 1; }
 ```
 
 Remember: `agent send` does **not** append Enter; `pane run` does.
@@ -125,13 +325,13 @@ Remember: `agent send` does **not** append Enter; `pane run` does.
 
 | Goal | Command |
 |---|---|
-| Show whole fleet board | `herdr tab focus "$fleet_tab"` |
-| Jump UI to one agent pane | `herdr agent focus reviewer` |
-| Jump to workspace | `herdr workspace focus w26` |
+| Stay on whole board | already one tab (root + subs) |
+| Jump UI to one sub-agent | `herdr agent focus reviewer` |
+| Jump back toward root | click root pane / focus root pane id |
 | Attach/takeover terminal | `herdr agent attach reviewer` (optional `--takeover`) |
 | Read without stealing focus | `herdr agent read reviewer --source recent-unwrapped --lines 80` |
 
-Orchestrator rule: use `--no-focus` on create/split/start so fleet spawn doesn't yank the human away mid-layout. After spawn, **focus the fleet tab once** so all panes are visible. Focus a single agent only when they ask to type into it or to dismiss a `blocked` dialog.
+Orchestrator rule: use `--no-focus` on every split/start so fleet spawn doesn't yank focus off the root agent. Focus a sub-agent only when the human wants to type or dismiss a `blocked` dialog.
 
 Detach Herdr client (leave agents running): `prefix+q` (`ctrl+b` then `q`). Reattach: `herdr` in a terminal.
 
@@ -139,58 +339,172 @@ Detach Herdr client (leave agents running): `prefix+q` (`ctrl+b` then `q`). Reat
 
 ```bash
 herdr pane read "$pane_id" --source recent-unwrapped --lines 80
-herdr pane read "$pane_id" --source recent-unwrapped --lines 200   # widen if truncated
-herdr pane read "$pane_id" --source visible --lines 50             # viewport only
-herdr pane read "$pane_id" --source detection                      # detector bottom buffer
+herdr pane read "$pane_id" --source recent-unwrapped --lines 200
+herdr pane read "$pane_id" --source visible --lines 50
+herdr pane read "$pane_id" --source detection
 ```
 
-Prefer `recent-unwrapped` for agent transcripts (soft wraps joined). Use `--format ansi` only when colors are evidence.
-
-If the answer clearly started above the window, increase `--lines` stepwise (80 → 160 → 300). There is no unbounded dump flag — widen deliberately.
+Prefer `recent-unwrapped` for agent transcripts. Widen `--lines` stepwise if truncated.
 
 ## Broadcast pattern (manual)
 
-Same idea as `scripts/broadcast.sh` (preferred one-liner: `scripts/broadcast.sh "$msg" reviewer tests docs`):
+Prefer `scripts/broadcast.sh` — it already resolves paths, dedupes, and rejects
+busy/blocked panes. The manual equivalent below exists for when the script is
+unavailable and must **replicate the same safeguards**, not skip them:
 
 ```bash
+# Repo-local copies win over global installs (see Phase 2a). Fail fast if
+# unresolved — do not silently continue with an empty $here.
+here=""
+for cand in \
+  "skills/herdr-agent-comms/scripts" \
+  ".agents/skills/herdr-agent-comms/scripts" \
+  ".claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.claude/skills/herdr-agent-comms/scripts" \
+  "$HOME/.agents/skills/herdr-agent-comms/scripts"; do
+  if [ -f "$cand/wait_for_idle.py" ]; then here="$cand"; break; fi
+done
+[ -n "$here" ] || { echo "Error: wait_for_idle.py not found in any known install location (repo, .agents/, .claude/, \$HOME). Fix the install or set \$here manually before retrying." >&2; exit 1; }
+
 targets=(reviewer tests docs)
 msg="Pull latest main and report branch + dirty state."
 
-# Resolve names → pane ids once (agent send is text-only; pane run submits Enter)
-panes=()
+# Resolve names → pane ids, deduping so a name and its own pane-id alias
+# (e.g. "reviewer" and "w26:p4") don't double-send.
+panes=(); labels=()
 for t in "${targets[@]}"; do
   p=$(herdr agent get "$t" | python3 -c 'import sys,json; d=json.load(sys.stdin); a=d.get("result",{}).get("agent") or d.get("result",{}); print(a["pane_id"])')
-  panes+=("$p")
+  [ -n "$p" ] || { echo "Error: target '$t' does not resolve — herdr agent list" >&2; exit 1; }
+  dup=""
+  for existing in "${panes[@]+"${panes[@]}"}"; do
+    [ "$existing" = "$p" ] && { dup=1; break; }
+  done
+  if [ -n "$dup" ]; then
+    echo "Note: '$t' resolves to an already-targeted pane $p — skipping duplicate." >&2
+    continue
+  fi
+  panes+=("$p"); labels+=("$t")
 done
 
-# Send once per pane (do NOT also agent-send the same message)
-for pane in "${panes[@]}"; do
-  herdr pane run "$pane" "$msg"
+# Preflight: reject panes that are `working`, `blocked`, or whose status we
+# can't verify (a failed/malformed `herdr pane get`). Matches
+# scripts/broadcast.sh Phase 1b — the status read is FAIL-CLOSED: a lookup or
+# parse failure returns non-zero (NOT an empty "safe" status), so an
+# unverifiable pane is skipped, never sent to. `skipped_any` folds every
+# skipped target into the final exit status so a mixed bad+good broadcast
+# does not report success.
+pane_status() {  # prints status, returns non-zero on lookup/parse failure
+  local out
+  out="$(herdr pane get "$1" 2>/dev/null)" || return 1
+  printf '%s' "$out" | python3 -c '
+import sys, json
+V={"idle","working","blocked","done","unknown"}
+try: r = json.load(sys.stdin)["result"]["pane"].get("agent_status")
+except Exception: sys.exit(1)
+# Off-enum values (numeric, garbage, empty) are unverifiable, NOT "unknown".
+print("unknown" if r is None else r if isinstance(r,str) and r in V else sys.exit(1))'
+}
+ready_panes=(); ready_labels=(); skipped_any=0
+for i in "${!panes[@]}"; do
+  if ! st="$(pane_status "${panes[$i]}")"; then
+    echo "Error: '${labels[$i]}' (${panes[$i]}) status could not be verified — skipped." >&2
+    skipped_any=1; continue
+  fi
+  case "$st" in
+    working) echo "Error: '${labels[$i]}' (${panes[$i]}) is already working — skipped." >&2; skipped_any=1; continue ;;
+    blocked) echo "Error: '${labels[$i]}' (${panes[$i]}) is blocked (trust/auth dialog) — skipped." >&2; skipped_any=1; continue ;;
+  esac
+  ready_panes+=("${panes[$i]}"); ready_labels+=("${labels[$i]}")
+done
+panes=("${ready_panes[@]+"${ready_panes[@]}"}"); labels=("${ready_labels[@]+"${ready_labels[@]}"}")
+[ "${#panes[@]}" -gt 0 ] || { echo "Error: no targets left to send to." >&2; exit 1; }
+
+tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
+markers=(); tasks=()
+for i in "${!panes[@]}"; do
+  herdr pane read "${panes[$i]}" --source recent-unwrapped --lines 80 >"$tmpdir/$i.baseline" \
+    || { echo "Error: baseline read failed for ${panes[$i]}" >&2; exit 1; }
+  suffix="$(date +%s)_$$_${i}_$RANDOM"
+  markers+=("HERDR_DONE_$suffix")
+  tasks[$i]="$msg
+
+After fully finishing, concatenate and print: HERDR_DONE_ and $suffix"
+done
+send_failed=(); became_unsafe=()
+for i in "${!panes[@]}"; do
+  # Recheck status IMMEDIATELY before dispatch — same enum-validated pane_status
+  # broadcast.sh re-runs here. The preflight above ran before baseline capture
+  # and task prep, so a target could have turned working/blocked (or become
+  # unverifiable) in that window; sending now would clobber a dialog or race a
+  # prior task. Skip it and fold it into the failure count.
+  if ! st="$(pane_status "${panes[$i]}")" \
+     || [ "$st" = "working" ] || [ "$st" = "blocked" ]; then
+    echo "Error: ${panes[$i]} became unsafe (${st:-unverifiable}) before dispatch — skipped." >&2
+    became_unsafe+=("$i"); continue
+  fi
+  # Record a failed send BY INDEX (not pane id) so the wait loop below, which
+  # iterates indices, can actually exclude it — a name-keyed entry would never
+  # match `$i` and the failed target would get a pointless completion waiter.
+  herdr pane run "${panes[$i]}" "${tasks[$i]}" || send_failed+=("$i")
 done
 
-# Concurrent completion: idle OR done (focused fleet tabs finish as idle)
-for pane in "${panes[@]}"; do
-  python3 scripts/wait_for_idle.py "$pane" --timeout 180 &
+# Retain each waiter's exit status — a bare `wait` masks timeouts (rc 2) and
+# blocked (rc 3), so the whole broadcast would "succeed" with agents stuck.
+# Wait only on panes actually dispatched (skip BOTH send_failed and
+# became_unsafe — both are index lists).
+pids=()
+for i in "${!panes[@]}"; do
+  skip=""
+  for f in ${send_failed[@]+"${send_failed[@]}"} ${became_unsafe[@]+"${became_unsafe[@]}"}; do
+    [ "$f" = "$i" ] && { skip=1; break; }
+  done
+  [ -n "$skip" ] && continue
+  python3 "$here/wait_for_idle.py" "${panes[$i]}" --timeout 180 --lines 80 \
+    --baseline-file "$tmpdir/$i.baseline" --completion-marker "${markers[$i]}" &
+  pids+=("$!:${panes[$i]}")
 done
-wait
+# Seed the result with the preflight outcome: any busy/blocked/unverifiable
+# target skipped above (at preflight OR the pre-dispatch recheck) must fail the
+# whole broadcast, not vanish.
+overall="$skipped_any"
+[ "${#became_unsafe[@]}" -eq 0 ] || overall=1
+for e in ${pids[@]+"${pids[@]}"}; do
+  jp="${e%%:*}"; pane="${e#*:}"
+  if wait "$jp"; then echo "$pane: reply ready"
+  else rc=$?
+    case "$rc" in 3) echo "$pane: BLOCKED (human needed)" >&2 ;;
+                  2) echo "$pane: TIMEOUT" >&2 ;;
+                  *) echo "$pane: waiter failed (rc $rc)" >&2 ;; esac
+    overall=1
+  fi
+done
+# send_failed holds INDICES — map back to pane ids for the report.
+if [ "${#send_failed[@]}" -gt 0 ]; then
+  for i in "${send_failed[@]}"; do echo "Send failed for: ${panes[$i]}" >&2; done
+  overall=1
+fi
+exit "$overall"
 ```
 
-Never wait only on `done` for the full budget after `herdr tab focus` — the fleet view is focused, so agents settle as `idle`.
+Do **not** `agent send` and then `pane run` the same message (double submit). Do **not** wait only on `done` for the full budget when the tab is focused — agents often settle as `idle` (use `wait_for_idle.py` or idle|done polling). Do **not** drop the dedupe or busy/blocked preflight from this manual path — that would reintroduce double-sends and dialog-clobbering that `scripts/broadcast.sh` exists to prevent.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
 | CLI errors "server not running" | `herdr status`; user starts `herdr` once in a real TTY |
+| Sub-agent on a new tab | You used `tab create` — use grid split in the root tab instead |
+| Root pane taken by worker | Never `pane run` the worker CLI on `$HERDR_PANE_ID` |
+| Unequal-width columns | Always split the current rightmost column and apply the full resize plan from `next_grid_split.py` |
 | Agent always `unknown` | `herdr integration install <agent>`; `herdr agent explain <target>` |
 | Nested tmux breaks detection | Don't run tmux inside Herdr panes |
-| `pane run` typed but agent idle | Send `herdr pane send-keys $pane enter`; re-wait `working` |
+| `pane run` typed but agent idle | Preflight (`preflight_send.py`), then guarded `send-keys $pane enter`; re-wait `working` and **propagate** its failure (a swallowed re-wait reports non-delivery as success) |
 | Status stuck `working` | `pane read`; overall wait budget; escalate stall |
 | `blocked` | Human must answer dialog; `agent focus` to show it |
-| Panes too narrow | Fewer agents per tab, or tab-per-agent layout; alternate split directions |
-| Wrong project files | Confirm `--cwd` and workspace label before spawn |
+| Panes too narrow | Fewer agents (equal-width columns shrink every time); tab-per-agent only if user asks |
+| Wrong project files | Confirm `--cwd` before spawn |
 | Name not found | `herdr agent list`; names are unique session-wide |
-| Accidentally focused spawn | Pass `--no-focus` on `tab create` / `agent start` / `pane split` |
+| Accidentally focused spawn | Pass `--no-focus` on `pane split` / `agent start` |
 
 ### Debug one pane
 
@@ -214,11 +528,11 @@ HERDR_LOG=herdr=debug herdr   # human client only
 
 | tmux | Herdr |
 |---|---|
-| `tmux new-session -s name` | `herdr agent start … --split …` (or root pane of fleet tab) |
+| `tmux split-window` from current | `next_grid_split.py` + `herdr pane split <rightmost> --direction right --no-focus` + `herdr pane resize` on every column |
 | session name | agent `name` + `pane_id` |
 | `tmux send-keys … Enter` | `herdr pane run` |
 | `tmux capture-pane -p -S -40` | `herdr pane read … --source recent-unwrapped --lines 40` |
 | `tmux has-session` | `herdr agent get` / `herdr pane get` |
-| `tmux kill-session` | `herdr pane close` / `herdr tab close` (fleet tab) |
+| `tmux kill-pane` (worker) | `herdr pane close` (sub-agent only) |
 | `tmux kill-server` | `herdr server stop` (confirm!) |
-| multiple app terminal tabs | one fleet tab with tiled panes (default) |
+| multiple app terminal tabs | **one** tab grid: root + tiled sub-agents |
