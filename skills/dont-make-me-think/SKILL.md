@@ -1,10 +1,10 @@
 ---
 name: dont-make-me-think
-description: "Review UI for usability issues using Steve Krug's principles and produce a scannable report. Use when asked for a usability audit, UX review, or UI feedback on screenshots, URLs, or code. Don't use for visual/brand design critique, accessibility (WCAG) audits, or backend/API review."
+description: "Review UI usability using Steve Krug's principles and produce a scannable report. Use for UX audits of screenshots, URLs, or code. Don't use for brand critique, WCAG audits, or backend/API review."
 license: MIT
 effort: medium
 metadata:
-  version: 1.3.0
+  version: 1.3.2
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 

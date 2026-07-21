@@ -4,7 +4,7 @@ description: "Generate or update docs to match the code, citing each claim to pa
 license: MIT
 effort: medium
 metadata:
-  version: 2.0.1
+  version: 2.0.2
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 
@@ -166,7 +166,7 @@ Use `√` pass, `×` fail, `—` for context. Per-phase checks:
 
 ## Guidelines
 
-- **Concise, for developers and AI agents.** State the fact, cite it, move on. No filler, no restating the obvious, no marketing tone.
+- **Protect the context budget.** State the fact, cite it, move on. No filler, no restating the obvious, no marketing tone.
 - Adapt structure to project type — not every `docs/` category applies.
 - Prefer code-derived facts over stale prose; keep existing accurate docs untouched (`verified-current`).
 - Maintain cross-references; remove content only when it's wrong or orphaned, and say so in the summary.

@@ -152,9 +152,9 @@ npx skills add https://github.com/luongnv89/skills --skill <name>
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**code-review**](skills/code-review/) | 2.0.1 | high | Review or improve code — 4 modes: bugs/security, performance, clean-code audit, slop cleanup |
+| [**code-review**](skills/code-review/) | 2.1.0 | high | Review or improve code — 4 modes: bugs/security, performance, clean-code audit, slop cleanup |
 | [**test-coverage**](skills/test-coverage/) | 1.3.0 | low | Target untested branches and edge cases |
-| [**dont-make-me-think**](skills/dont-make-me-think/) | 1.3.0 | medium | Usability review using Krug's principles |
+| [**dont-make-me-think**](skills/dont-make-me-think/) | 1.3.2 | medium | Usability review using Krug's principles |
 
 **`code-review` has four modes** — pick by intent or pass `mode:<name>`:
 
@@ -174,7 +174,7 @@ Adjacent skills: **test-coverage** (generate tests for untested branches) · **d
 | [**auto-push**](skills/auto-push/) | 1.0.3 | low | Commit message + stage + push with secret and size checks |
 | [**devops-pipeline**](skills/devops-pipeline/) | 2.0.3 | medium | Pre-commit + GitHub Actions quality gates |
 | [**security-setup**](skills/security-setup/) | 1.4.0 | high | Local pre-commit secret scans, dep checks, static analysis, gated CI |
-| [**fork-upstream-sync**](skills/fork-upstream-sync/) | 1.0.3 | medium | Sync a fork with upstream while keeping feature branches and open PRs mergeable |
+| [**fork-upstream-sync**](skills/fork-upstream-sync/) | 1.3.2 | medium | Sync a fork with upstream while keeping feature branches and open PRs mergeable |
 | [**release-manager**](skills/release-manager/) | 2.6.0 | max | Bump, changelog, tag, GitHub release, publish |
 
 ### Product Planning
@@ -186,27 +186,27 @@ Adjacent skills: **test-coverage** (generate tests for untested branches) · **d
 | [**brand-name-checker**](skills/brand-name-checker/) | 1.3.2 | max | Trademark, domain, social, registry conflicts |
 | [**prd-generator**](skills/prd-generator/) | 1.3.2 | max | Structured PRD from idea or validate notes |
 | [**tad-generator**](skills/tad-generator/) | 1.4.0 | max | Technical architecture document from PRD |
-| [**tasks-generator**](skills/tasks-generator/) | 1.3.0 | max | Sprint tasks and plan from PRD |
+| [**tasks-generator**](skills/tasks-generator/) | 1.3.1 | max | Sprint tasks and plan from PRD |
 
 ### Frontend & Design
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**frontend-design**](skills/frontend-design/) | 1.2.3 | high | Production UIs with usability-first approach |
-| [**logo-designer**](skills/logo-designer/) | 1.2.2 | medium | 7 SVG logo variants from project context |
-| [**diagram-generator**](skills/diagram-generator/) | 1.0.0 | high | One entry point for diagrams — routes to draw.io XML or Excalidraw JSON |
-| [**website-cloner**](skills/website-cloner/) | 1.1.6 | high | 6-phase URL to improved Vite/React/Tailwind site |
+| [**frontend-design**](skills/frontend-design/) | 1.2.4 | high | Production UIs with usability-first approach |
+| [**logo-designer**](skills/logo-designer/) | 1.2.3 | medium | 7 SVG logo variants from project context |
+| [**diagram-generator**](skills/diagram-generator/) | 1.1.2 | high | One entry point for diagrams — routes to draw.io XML or Excalidraw JSON |
+| [**website-cloner**](skills/website-cloner/) | 1.2.1 | high | 6-phase URL to improved Vite/React/Tailwind site |
 
 **Website cloner phases** (install individually or as suite):
 
 | Phase | Version | What it does |
 |---|---|---|
-| website-analyzer | 1.0.2 | 6-dimension analysis → JSON |
-| website-clone-report | 1.0.2 | Stakeholder report from analysis |
-| website-improvement-prd | 1.1.1 | Improvement PRD |
-| website-implementation-plan | 1.1.0 | tasks.md from PRD |
-| website-builder | 1.0.2 | Build improved site |
-| website-clone-final-report | 1.0.1 | Before/after summary |
+| website-analyzer | 1.3.0 | 6-dimension analysis → JSON |
+| website-clone-report | 1.2.2 | Stakeholder report from analysis |
+| website-improvement-prd | 1.3.0 | Improvement PRD |
+| website-implementation-plan | 1.3.2 | tasks.md from PRD |
+| website-builder | 1.3.1 | Build improved site |
+| website-clone-final-report | 1.3.0 | Before/after summary |
 
 **Diagram generator engines** (install the umbrella or a single engine):
 
@@ -219,9 +219,9 @@ Adjacent skills: **test-coverage** (generate tests for untested branches) · **d
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**doc-manager**](skills/doc-manager/) | 2.0.1 | medium | Generate/update docs to match code, cited to path:line, never invented |
-| [**landing-page-generator**](skills/landing-page-generator/) | 1.2.0 | high | Landing pages: marketing copy from a brief, or a README-to-landing rewrite |
-| [**seo-ai-optimizer**](skills/seo-ai-optimizer/) | 1.2.1 | high | Technical SEO + AI-bot directives |
+| [**doc-manager**](skills/doc-manager/) | 2.0.2 | medium | Generate/update docs to match code, cited to path:line, never invented |
+| [**landing-page-generator**](skills/landing-page-generator/) | 1.2.1 | high | Landing pages: marketing copy from a brief, or a README-to-landing rewrite |
+| [**seo-ai-optimizer**](skills/seo-ai-optimizer/) | 1.2.3 | high | Technical SEO + AI-bot directives |
 | [**oss-ready**](skills/oss-ready/) | 1.2.1 | low | Add OSS files and templates |
 | [**agent-config**](skills/agent-config/) | 1.3.1 | medium | CLAUDE.md + AGENTS.md per best practices |
 | [**subagent-creator**](skills/subagent-creator/) | 1.1.2 | high | Create, evaluate, improve Claude Code subagent files (.claude/agents/*.md) |
@@ -231,18 +231,18 @@ Adjacent skills: **test-coverage** (generate tests for untested branches) · **d
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
 | [**aso-marketing**](skills/aso-marketing/) | 1.2.1 | max | App Store + Google Play keyword and metadata optimization |
-| [**appstore-review-checker**](skills/appstore-review-checker/) | 1.2.0 | high | Pre-submission audit vs Apple guidelines |
+| [**appstore-review-checker**](skills/appstore-review-checker/) | 1.2.1 | high | Pre-submission audit vs Apple guidelines |
 
 ### Tooling
 
 | Skill | Version | Effort | What it does |
 |---|---|---|---|
-| [**cli-builder**](skills/cli-builder/) | 1.0.4 | high | 5-step CLI tool builder with approval gates |
-| [**ollama-optimizer**](skills/ollama-optimizer/) | 1.1.0 | medium | Hardware-aware Ollama tuning |
-| [**install-script-generator**](skills/install-script-generator/) | 2.2.0 | high | Cross-platform install.sh with env detection |
+| [**cli-builder**](skills/cli-builder/) | 1.0.5 | high | 5-step CLI tool builder with approval gates |
+| [**ollama-optimizer**](skills/ollama-optimizer/) | 1.1.1 | medium | Hardware-aware Ollama tuning |
+| [**install-script-generator**](skills/install-script-generator/) | 2.2.1 | high | Cross-platform install.sh with env detection |
 | [**opencode-runner**](skills/opencode-runner/) | 1.4.1 | medium | Delegate work to opencode free cloud models |
-| [**herdr-agent-comms**](skills/herdr-agent-comms/) | 1.21.0 | medium | Manage Herdr agent fleets: tile panes, message/wait/read, steer |
-| [**tmux-agent-comms**](skills/tmux-agent-comms/) | 1.9.0 | medium | Spawn, message, read CLI agents in tmux |
+| [**herdr-agent-comms**](skills/herdr-agent-comms/) | 1.22.0 | medium | Manage Herdr agent fleets: tile panes, message/wait/read, steer |
+| [**tmux-agent-comms**](skills/tmux-agent-comms/) | 2.1.0 | medium | Spawn, message, read CLI agents in tmux |
 
 ---
 

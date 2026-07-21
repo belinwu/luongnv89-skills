@@ -1,16 +1,16 @@
 ---
 name: website-clone-final-report
-description: "Produce a before/after comparison report of a website clone project. Uses Phase 1 analysis as baseline and builder metadata as 'after' snapshot. Covers performance, SEO, security, UI/UX deltas, deviations, and GitHub Pages URL. Use when asked for a final report, before-after comparison, or project closure summary of a website clone. Don't use for ongoing monitoring or live site audits."
+description: "Generate a website-clone closure report comparing baseline analysis, builder metadata, planned tasks, and implemented results. Use after a completed rebuild. Don't use for live audits, ongoing monitoring, implementation, or speculative metrics."
 license: MIT
 effort: high
 metadata:
-  version: 1.0.1
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.3.0
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Clone Final Report
 
-Produces a before/after comparison report closing the loop on a website clone project. Uses Phase 1 analysis as baseline and builder metadata as the "after" snapshot.
+Produces a before/after comparison report closing the loop on a website clone project. Uses Phase 1 analysis as the baseline and the builder's post-deployment re-audit as the comparable "after" snapshot.
 
 ## When to Use
 
@@ -24,7 +24,7 @@ Do **not** use for ongoing monitoring or live site audits — those are separate
 ## Workflow
 
 ```
-1. Read Phase 1 analysis (baseline) and builder metadata (after)
+1. Read Phase 1 analysis (baseline) and validate builder metadata's post-deployment after snapshot
 2. Read tasks.md for what was implemented
 3. Read prd.md for what was planned
 4. Compute before/after deltas per dimension
@@ -34,6 +34,8 @@ Do **not** use for ongoing monitoring or live site audits — those are separate
 ```
 
 ## Output: final-report.md Structure
+
+Use the report template below as the only output template. Read only the source sections needed for each comparison to preserve the context budget.
 
 ```markdown
 # Final Report: <site name> Clone
@@ -60,11 +62,11 @@ A plain-language summary of what was built, drawn from tasks.md:
 
 | Metric | Before | After | Delta |
 |--------|--------|-------|-------|
-| LCP | 4.3s | 1.8s | -58% |
-| CLS | 0.18 | 0.03 | -83% |
-| TTFB | 0.8s | 0.2s | -75% |
-| Page Weight | 2.1 MB | 650 KB | -69% |
-| Requests | 87 | 32 | -63% |
+| LCP estimate (seconds) | 4.3 | 1.8 | -58% |
+| CLS estimate (unitless) | 0.18 | 0.03 | -83% |
+| TTFB estimate (seconds) | 0.8 | 0.2 | -75% |
+| Page Weight (KB) | 2100 | 650 | -69% |
+| Requests (count) | 87 | 32 | -63% |
 
 ### SEO
 
@@ -73,16 +75,18 @@ A plain-language summary of what was built, drawn from tasks.md:
 | Overall Score | 62/100 | 94/100 | +52% |
 | Meta Tags | 60 | 95 | +58% |
 | Heading Structure | 50 | 85 | +70% |
-| Alt Text Coverage | 30% | 100% | +233% |
-| Structured Data | 0 | 100 | +100% |
+| Alt Text Score | 30/100 | 100/100 | +233% |
+| Structured Data | 20/100 | 100/100 | +400% |
+| Crawlability | 60/100 | 90/100 | +50% |
 
 ### Security
 
 | Check | Before | After |
 |-------|--------|-------|
 | HTTPS | Yes | Yes |
-| Security Headers | Partial | Strong |
-| Mixed Content | 2 issues | 0 issues |
+| Mixed Content | Detected | Not detected |
+| Security Headers Detected | 2 | 4 |
+| Exposed Metadata Findings | 2 | 0 |
 
 ### UI/UX Changes
 
@@ -124,8 +128,8 @@ the URL above."
 
 ---
 
-*This report was generated from the Phase 1 analysis baseline and builder metadata.*
-*All metrics are based on automated analysis and may not reflect actual user experience.*
+*This report was generated from the Phase 1 analysis baseline and the builder's post-deployment re-audit.*
+*LCP, CLS, TTFB, page weight, and request values are static-analysis estimates, not field measurements.*
 ```
 
 ## Step 1: Read Inputs
@@ -144,19 +148,28 @@ Read file <path-to-tasks.md>
 Read file <path-to-prd.md>
 ```
 
-If any input is missing, note it and proceed with what's available.
+Validate `builder-metadata.json` has `after_snapshot_source`, `after_snapshot_status`, and the
+embedded `performance`, `seo`, and `security` objects copied from the post-deployment analyzer run.
+If any input is missing, note it and proceed only to produce a clearly `PARTIAL` report.
 
 ## Step 2: Compute Deltas
 
-Compare baseline metrics against builder metadata:
+Compare matching baseline and after-snapshot fields:
 
-| Metric | Source | Delta |
-|--------|--------|-------|
-| LCP, CLS, TTFB, page weight, requests | Phase 1 analysis vs. builder metadata | after - before |
-| SEO score, dimension scores | Phase 1 analysis vs. builder metadata | after - before |
-| Security checks | Phase 1 analysis vs. builder metadata | qualitative comparison |
+| Metric | Baseline source | After source |
+|--------|-----------------|--------------|
+| LCP estimate (seconds) | `analysis.performance.lcp_estimate_seconds` | `builder.performance.lcp_estimate_seconds` |
+| CLS estimate (unitless) | `analysis.performance.cls_estimate` | `builder.performance.cls_estimate` |
+| TTFB estimate (seconds) | `analysis.performance.ttfb_estimate_seconds` | `builder.performance.ttfb_estimate_seconds` |
+| Page weight (KB), requests (count) | `analysis.performance.*` | `builder.performance.*` |
+| SEO score and five dimension scores | `analysis.seo.*` | `builder.seo.*` |
+| HTTPS, mixed content, header list, exposed metadata | `analysis.security.*` | `builder.security.*` |
 
-For UI/UX, describe changes based on the tasks.md implementation vs. the Phase 1 analysis.
+For numeric metrics, normalize to the displayed unit and calculate percentage delta as
+`((after - before) / before) × 100`, rounded to the nearest whole percent. If the baseline is zero,
+show the absolute `after - before` change and label percentage delta `N/A (zero baseline)`. Compare
+security booleans directly and arrays by reproducible counts; do not invent qualitative ratings.
+For UI/UX, describe changes based on tasks.md versus the Phase 1 analysis.
 
 ## Step 3: Identify Deviations
 
@@ -192,10 +205,38 @@ Final report saved to: <absolute-path>
 GitHub Pages URL: <url>
 ```
 
-## Error Handling
+## Acceptance Criteria and Expected Output
+
+Verify the report before saving:
+
+- Every source file is named as present or missing; no absent input is silently treated as evidence.
+- Required comparison data comprises all five performance fields, SEO overall score plus all five dimension scores, and the four security fields (`https`, `mixed_content`, `security_headers`, `exposed_metadata`) in both snapshots.
+- For each numeric metric, show the formula, deterministic unit, and correctly rounded delta; label estimates and never invent unavailable values.
+- Each qualitative claim cites an implemented task, builder deviation, or baseline observation.
+- `final-report.md` contains implementation summary, performance, SEO, security, UI/UX, deviations, caveats, and Pages URL sections.
+- `PASS` requires valid baseline, builder metadata, tasks, and PRD inputs; a responsive Pages URL; `after_snapshot_status: complete`; every required comparison supported; and a non-empty saved report.
+- `PARTIAL` is mandatory when the report is saved but any required input, URL, snapshot, metric, or comparison is missing, null, invalid, or unavailable. A report write failure or inability to produce a valid report is `FAIL`.
+
+## Step Completion Report
+
+```text
+◆ Final Comparison Report
+··································································
+  Inputs accounted for: √ pass | × partial ([missing])
+  Deltas verified:      √ pass | × partial ([unavailable])
+  Deviations compared:  √ pass
+  Report saved:         √ pass ([absolute path])
+  Pages URL:            √ pass | × unavailable
+  Result:               PASS | PARTIAL | FAIL
+```
+
+Use `PASS` only when every required comparison above is supported. Any unavailable required before/after value forces `PARTIAL`, even when the report can explain the gap; never promote unavailable comparisons to `PASS`.
+
+## Edge Cases and Error Handling
 
 | Failure | Behavior |
 |---|---|
-| No analysis input | Note missing baseline, proceed with qualitative comparison |
-| No builder metadata | Note missing after data, request builder metadata from orchestrator |
-| No tasks.md | Describe what was implemented based on available data only |
+| No analysis input | Produce a qualitative report only if useful; result is `PARTIAL` |
+| No builder metadata | Request builder metadata from the orchestrator; any saved report is `PARTIAL` |
+| Missing/incomplete after snapshot | Preserve unavailable values and analyzer errors; result is `PARTIAL` |
+| No tasks.md or prd.md | Describe only supported implementation/deviation facts; result is `PARTIAL` |

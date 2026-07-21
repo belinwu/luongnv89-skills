@@ -1,11 +1,11 @@
 ---
 name: website-analyzer
-description: "Analyze any website URL across 6 dimensions: UI/UX, category, style, performance (LCP/CLS/TTFB/weight/requests), surface-level security, and SEO (score 0-100 with breakdown). Outputs structured JSON for downstream skills. Use when asked to analyze, audit, or scan a website. Don't use for full SEO audits or penetration testing."
+description: "Analyze a website's UI/UX, category, style, performance, surface security, and SEO; emit structured JSON. Use for URL audits or website-cloner input. Don't use for penetration tests, full SEO audits, or App Store ASO."
 license: MIT
 effort: high
 metadata:
-  version: 1.0.2
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.3.0
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Analyzer
@@ -20,6 +20,13 @@ Trigger when the user asks to:
 - Understand a website's structure, style, or category
 
 Do **not** use for full penetration testing, deep security audits, or App Store ASO.
+
+## Prerequisites
+
+1. Require a valid `http://` or `https://` URL and an output path or stdout destination.
+2. Confirm page-fetch access is available; never bypass authentication, paywalls, or bot protections.
+3. When an output path is supplied, validate that its directory exists and is writable; skip this check for stdout.
+4. If any prerequisite fails, return a descriptive error with the failing input and corrective action.
 
 ## Workflow
 
@@ -58,9 +65,9 @@ Produce structured JSON at the requested output path (or stdout):
     "aesthetic": "vibe description"
   },
   "performance": {
-    "lcp_estimate": 2.5,
+    "lcp_estimate_seconds": 2.5,
     "cls_estimate": 0.05,
-    "ttfb_estimate": 0.3,
+    "ttfb_estimate_seconds": 0.3,
     "total_page_weight_kb": 1200,
     "request_count": 45,
     "notes": "estimated from static analysis"
@@ -126,9 +133,9 @@ From fetched content, extract:
 |--------|--------|
 | Page weight | Sum of referenced resource sizes; estimate image sizes from layout |
 | Request count | Count `<img>`, `<link rel="stylesheet">`, `<script>`, font refs |
-| LCP | Inferred from above-fold content size; min 0.5s for bare HTML |
-| CLS | Estimated from layout shift indicators (missing dimensions, late loaders) |
-| TTFB | Inferred from hosting signals; static → low, dynamic → moderate |
+| LCP (`lcp_estimate_seconds`) | Inferred from above-fold content size; seconds, with a 0.5-second minimum for bare HTML |
+| CLS (`cls_estimate`) | Estimated from layout shift indicators (missing dimensions, late loaders); unitless |
+| TTFB (`ttfb_estimate_seconds`) | Inferred from hosting signals; seconds; static → low, dynamic → moderate |
 
 All metrics are estimates from static analysis. Note this in output.
 
@@ -162,7 +169,7 @@ When a sub-score cannot be computed (e.g. `robots.txt` unreachable), record the 
 - **Category**: `saas-landing` | `portfolio` | `e-commerce` | `blog` | `docs` | `dashboard` | `marketing-site` | `web-app` | `other`
 - **Style**: Typography, color palette, spacing density, motion indicators, aesthetic vibe
 
-## Error Handling
+## Edge Cases and Error Handling
 
 | Failure | Behavior |
 |---|---|
@@ -171,4 +178,30 @@ When a sub-score cannot be computed (e.g. `robots.txt` unreachable), record the 
 | Paywall / login | `{"error": "paywall"}` — stop |
 | Redirect loop | `{"error": "redirect-loop"}` — stop |
 | Empty page | `{"error": "empty"}` — stop |
+
+## Acceptance Criteria
+
+Verify the expected output before reporting success:
+
+- JSON parses and contains `url`, `timestamp`, `ui_ux`, `category`, `style`, `performance`, `security`, and `seo`.
+- `seo.score` is an integer from 0 through 100 and matches the weighted, null-adjusted dimension calculation.
+- Performance estimates use `lcp_estimate_seconds`, unitless `cls_estimate`, `ttfb_estimate_seconds`, and `total_page_weight_kb`, plus an explicit static-analysis limitation.
+- Every unavailable measurement is `null` or an error field, never an invented value.
+- The output is written to the requested destination; assert the file exists and can be parsed when a path is supplied.
+
+## Step Completion Report
+
+Emit this after analysis:
+
+```text
+◆ Analyze Website
+··································································
+  Input fetched:        √ pass | × fail ([reason])
+  Six dimensions:      √ pass | × partial ([missing])
+  SEO calculation:     √ pass | × partial ([null dimensions])
+  Output JSON:         √ pass ([path or stdout])
+  Result:              PASS | PARTIAL | FAIL
+```
+
+Report `PASS` only when the JSON is valid and all six top-level dimensions are present; use `PARTIAL` for explicitly labeled crawlability gaps.
 

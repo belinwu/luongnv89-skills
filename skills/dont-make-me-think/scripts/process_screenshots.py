@@ -67,6 +67,14 @@ class ColorPalette:
 
 
 @dataclass
+class ImageCollection:
+    """Supported images collected from inputs plus paths that were not found."""
+
+    images: list[Path]
+    missing: list[str]
+
+
+@dataclass
 class ScreenshotAnalysis:
     """Complete analysis of a single screenshot."""
 
@@ -600,8 +608,8 @@ def analyze_single(path: Path) -> ScreenshotAnalysis:
     )
 
 
-def collect_images(paths: list[str], recursive: bool = False) -> list[Path]:
-    """Collect all image files from the given paths."""
+def collect_images(paths: list[str], recursive: bool = False) -> ImageCollection:
+    """Collect supported images and report input paths that do not exist."""
     images = []
     missing = []
     for p in paths:
@@ -624,9 +632,7 @@ def collect_images(paths: list[str], recursive: bool = False) -> list[Path]:
         if abs_path not in seen:
             seen.add(abs_path)
             unique.append(img)
-    # Store missing paths for reporting (attached to the returned list as metadata)
-    unique._missing = missing  # type: ignore[attr-defined]
-    return sorted(unique)
+    return ImageCollection(images=sorted(unique), missing=missing)
 
 
 def build_report(analyses: list[ScreenshotAnalysis]) -> dict:
@@ -756,16 +762,21 @@ def main():
     if not args.quiet:
         print(f"● Collecting images from {len(args.paths)} path(s)...", file=sys.stderr)
 
-    image_paths = collect_images(args.paths, recursive=args.recursive)
+    collection = collect_images(args.paths, recursive=args.recursive)
+    image_paths = collection.images
+    missing_paths = collection.missing
 
-    # Check for missing paths before validation
-    missing_paths = getattr(image_paths, "_missing", None)
+    # Report missing inputs before validating any images that were found.
+    for path in missing_paths:
+        print(f"✗ Path not found: {path}", file=sys.stderr)
+
     if not image_paths:
-        if missing_paths:
-            for path in missing_paths:
-                print(f"✗ Path not found: {path}", file=sys.stderr)
-        else:
-            print("○ No supported images found.", file=sys.stderr)
+        if not missing_paths:
+            print("○ No supported images found in the supplied paths.", file=sys.stderr)
+        print(
+            "Pass an existing PNG, JPEG, GIF, WebP, or BMP path; add --recursive for directories.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if not args.quiet:
@@ -796,6 +807,10 @@ def main():
     if not analyses and errors:
         for path, err in errors:
             print(f"✗ {path}: {err}", file=sys.stderr)
+        print(
+            "Use a readable, non-empty supported image and retry; inspect the per-path errors above.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Build report

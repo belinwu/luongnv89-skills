@@ -1,11 +1,11 @@
 ---
 name: website-builder
-description: "Execute the approved tasks.md to build a Vite + React + shadcn/ui + Tailwind CSS website deployable to GitHub Pages. Collects assets from the original site and creates new assets per plan. Emits builder metadata for the final report. Use when asked to build, implement, or code a website from a plan. Don't use for design review or planning — those are upstream phases."
+description: "Build an approved Vite/React/Tailwind plan, collect assets, verify static output, deploy to GitHub Pages, and emit metadata. Use for implementing tasks.md. Don't use for design review, planning, backend services, or unapproved specs."
 license: MIT
 effort: high
 metadata:
-  version: 1.0.2
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.3.1
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Builder
@@ -27,6 +27,7 @@ Do **not** use for design review or planning — those are upstream phases.
 - `prd.md` (Phase 3 proposal) exists for alignment reference
 - Node.js and npm are available
 - Git is available for repository management
+- `website-analyzer` is installed for the comparable post-deployment audit
 
 ## Tech Stack
 
@@ -47,12 +48,19 @@ Do **not** use for design review or planning — those are upstream phases.
 5. Create new assets as specified
 6. Build and verify
 7. Deploy to GitHub Pages
-8. Emit builder metadata
+8. Re-audit the deployed URL for comparable after metrics
+9. Emit builder metadata
 ```
 
 ## Repo Sync Before Edits (mandatory)
 
-Before modifying any project files:
+Choose the repository branch before modifying project files:
+
+1. **Existing git worktree with `origin`:** preserve dirty changes, then sync before edits.
+2. **New project with no git repository or remote:** skip fetch/pull, initialize the project, and add the approved remote only during deployment.
+3. **Existing repository with an unexpectedly missing `origin`:** stop and ask; do not assume it is a new project.
+
+For the existing-worktree branch, run:
 
 ```bash
 branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -69,7 +77,7 @@ git fetch origin && git pull --rebase origin "$branch"
 git stash pop
 ```
 
-If origin is missing or rebase fails, stop and ask.
+If rebase or stash restoration fails, stop and ask. Never discard user changes.
 
 ## Step 1: Read the Plan
 
@@ -94,7 +102,19 @@ npm install tailwindcss @tailwindcss/vite
 npm install class-variance-authority clsx tailwind-merge lucide-react
 ```
 
-Configure Tailwind and shadcn/ui. Set up the GitHub Pages deployment target.
+Configure Tailwind and shadcn/ui. Set up the GitHub Pages deployment target. In `vite.config.js` (or `.ts`), make the build base explicit so the workflow can select `/` for a user/organization Pages repository and `/<repo>/` for a project Pages repository:
+
+```js
+import { defineConfig } from "vite"
+import react from "@vitejs/plugin-react"
+
+export default defineConfig({
+  base: process.env.VITE_BASE_PATH || "/",
+  plugins: [react()],
+})
+```
+
+Use `import.meta.env.BASE_URL` for public asset URLs. For a client-routed SPA, prefer `HashRouter`; if the approved plan requires `BrowserRouter`, set its `basename` from `import.meta.env.BASE_URL` and provide a tested Pages 404 fallback. Do not leave root-relative asset or route URLs that bypass the configured base.
 
 ## Step 3: Execute Tasks Phase by Phase
 
@@ -160,24 +180,86 @@ Verify:
 
 ## Step 6: Deploy to GitHub Pages
 
-Create or update a GitHub repository for the site:
+Create `.github/workflows/deploy-pages.yml`. Pages must deploy the verified Vite `dist/` artifact through GitHub Actions—not the repository root or a branch folder:
 
-```bash
-git init
-git remote add origin git@github.com:<user>/<repo>.git
-git add .
-git commit -m "chore: initial site build"
-git push -u origin main
+```yaml
+name: Deploy Vite site to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/configure-pages@v5
+      - run: npm ci
+      - name: Configure Vite base path
+        shell: bash
+        run: |
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          if [[ "$repo_name" == *.github.io ]]; then
+            echo "VITE_BASE_PATH=/" >> "$GITHUB_ENV"
+          else
+            echo "VITE_BASE_PATH=/$repo_name/" >> "$GITHUB_ENV"
+          fi
+      - run: npm run build
+      - name: Verify static artifact
+        run: test -f dist/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
 ```
 
-Configure GitHub Pages:
-- Repository Settings → Pages → Source: `main` branch, `/ (root)`
+Create or update the GitHub repository for the site, run the repository's required secret scan, then commit and push the project including `package-lock.json`, `vite.config.*`, and the workflow. In Repository Settings → Pages, select **GitHub Actions** as the source; never select `main / (root)` or `/docs` for this Vite build.
 
-Report the GitHub Pages URL.
+Verify the completed workflow uploaded `dist/`, the deploy job succeeded, and its `page_url` responds. Confirm project Pages uses `https://<user>.github.io/<repo>/`, while `<user>.github.io` repositories use the root URL. Report the deployed URL from the workflow output.
 
-## Step 7: Emit Builder Metadata
+## Step 7: Re-audit the Deployed Site
 
-Write a JSON metadata file for the final report phase:
+After the GitHub Pages URL responds successfully, run the same analyzer used for the baseline:
+
+```text
+/website-analyzer "https://<user>.github.io/<repo>/" --output "$PROJECT_DIR/after-analysis.json"
+```
+
+Require the analyzer's structured `performance`, `seo`, and `security` objects. The comparable
+performance fields are `lcp_estimate_seconds`, unitless `cls_estimate`,
+`ttfb_estimate_seconds`, `total_page_weight_kb`, and `request_count`. Preserve analyzer `null`
+values and caveats; do not turn estimates into measured values. If deployment or the re-audit
+fails, record the error and return `PARTIAL` rather than inventing an after snapshot.
+
+## Step 8: Emit Builder Metadata
+
+Write a JSON metadata file for the final report phase. Copy the post-deployment analyzer objects
+without changing their field names or units:
 
 ```json
 {
@@ -189,6 +271,40 @@ Write a JSON metadata file for the final report phase:
   "assets_created": ["cta-copy.txt", "hero-icon.svg", ...],
   "deviations": [],
   "build_output_size_kb": 450,
+  "after_snapshot_source": "after-analysis.json",
+  "after_snapshot_status": "complete | partial | unavailable",
+  "performance": {
+    "lcp_estimate_seconds": 1.8,
+    "cls_estimate": 0.03,
+    "ttfb_estimate_seconds": 0.2,
+    "total_page_weight_kb": 650,
+    "request_count": 32,
+    "notes": "estimated from static analysis"
+  },
+  "security": {
+    "https": true,
+    "mixed_content": false,
+    "security_headers": ["strict-transport-security"],
+    "exposed_metadata": [],
+    "note": "Surface-level check only. Not a full security audit."
+  },
+  "seo": {
+    "score": 94,
+    "title_tag": "present",
+    "meta_description": "present",
+    "heading_structure": "h1:1 h2:4",
+    "alt_text_coverage": 1.0,
+    "structured_data": "present",
+    "canonical_url": "present",
+    "robots_sitemap": "robots=ok | sitemap=found",
+    "dimension_scores": {
+      "meta_tags": 95,
+      "heading_structure": 85,
+      "image_alt_text": 100,
+      "structured_data": 100,
+      "crawlability": 90
+    }
+  },
   "tech_stack": {
     "bundler": "vite",
     "framework": "react",
@@ -198,7 +314,30 @@ Write a JSON metadata file for the final report phase:
 }
 ```
 
-Write to: `$PROJECT_DIR/builder-metadata.json`
+`build_output_size_kb` is the complete build artifact size, not page weight; never use it as
+`performance.total_page_weight_kb`. Write metadata to `$PROJECT_DIR/builder-metadata.json`.
+
+## Acceptance Criteria
+
+Verify the expected output before deployment is marked complete:
+
+- `npm run build` exits 0 and `dist/index.html` exists.
+- `.github/workflows/deploy-pages.yml` runs `npm ci` and `npm run build`, uploads exactly `dist/` as a Pages artifact, and deploys it with the required Pages permissions and environment.
+- The workflow-derived `VITE_BASE_PATH` is `/` for user/organization Pages and `/<repo>/` for project Pages; Vite, internal routes, and asset URLs use that base consistently.
+- Every approved task is represented in `tasks_completed` or named in `deviations`; assert `tasks_completed <= tasks_total`.
+- Internal routes and collected asset paths resolve under the GitHub Pages base path, including a direct-refresh check for every supported route strategy.
+- `builder-metadata.json` parses and contains the URL, task counts, asset lists, deviations, output size, exact tech stack, after-snapshot status, and structured performance/SEO/security objects.
+- A `PASS` result requires a responsive Pages URL and a complete comparable after snapshot with every required performance field, SEO overall/dimension score, and security check non-null.
+- Deployment, analyzer, or required after-value gaps are recorded and force `PARTIAL`; a metadata write failure is `FAIL`.
+- No credentials, local paths, or secret environment values appear in generated assets or metadata.
+
+## Edge Cases
+
+- Existing repository or remote: inspect `git status` and `git remote -v`; confirm the target before changing either.
+- Dirty working tree: preserve user changes and follow the mandatory sync guardrail; never discard them.
+- Build succeeds but deployment fails: keep the verified local build, record the error, set the after snapshot unavailable, and return `PARTIAL`.
+- Deployment succeeds but the re-audit is incomplete: preserve nulls and analyzer caveats, set `after_snapshot_status` to `partial`, and return `PARTIAL`.
+- A task conflicts with the approved PRD: stop that task and ask; do not silently reinterpret the plan.
 
 ## Step Completion Reports
 
@@ -231,7 +370,8 @@ Write to: `$PROJECT_DIR/builder-metadata.json`
 ······································································
   Repository created:     √ pass
   GitHub Pages configured: √ pass (<url>)
+  After snapshot:         √ complete | × partial ([missing])
   Metadata emitted:       √ pass
   ____________________________
-  Result:                 PASS
+  Result:                 PASS | PARTIAL | FAIL
 ```

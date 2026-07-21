@@ -1,10 +1,10 @@
 ---
 name: frontend-design
-description: "Build production-grade frontend interfaces with distinctive aesthetics and working code. Use when asked to create a UI, component, page, or frontend feature. Skip for backend/API work or usability-only audits."
+description: "Build production-grade frontend interfaces with distinctive aesthetics and working code. Use for UI components, pages, or frontend features. Don't use for backend/API work or usability-only audits."
 license: MIT
 effort: high
 metadata:
-  version: 1.2.3
+  version: 1.2.4
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 

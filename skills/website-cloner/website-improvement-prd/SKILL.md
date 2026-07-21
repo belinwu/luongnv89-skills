@@ -1,11 +1,11 @@
 ---
 name: website-improvement-prd
-description: "Turn approved end-user report into a full improvement proposal with what/why/value for each change. Writes prd.md after user approval. Use when asked to propose website improvements, create a PRD for a site rebuild, or plan improvements with measurable impact. Don't use for implementation planning or coding — those are separate phases."
+description: "Generate an approval-gated improvement PRD from a report and baseline, with evidence-backed what/why/value changes and measurable targets. Use for rebuild proposals. Don't use for task breakdown, coding, implementation, or unapproved persistence."
 license: MIT
 effort: high
 metadata:
-  version: 1.1.1
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.3.0
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Improvement PRD
@@ -189,11 +189,38 @@ The orchestrator MUST NOT advance to Phase 4 unless the outcome is `approved`.
 A standalone invocation may ignore the status line, but the file-existence rule
 still holds: no approval, no `prd.md`.
 
-## Error Handling
+## Acceptance Criteria and Expected Output
+
+Verify the complete proposal before requesting approval:
+
+- Every proposed change contains a specific What, evidence-backed Why, and measurable Expected Value.
+- Every baseline issue from the approved report or analysis maps to a proposal change or an explicit out-of-scope rationale.
+- Metric targets include units, current values, realistic target logic, and correctly computed deltas; label estimates rather than presenting them as guarantees.
+- `prd.md` contains executive summary, current state, grouped improvements, metrics summary, next steps, and source-data caveat.
+- The expected result is an approved non-empty markdown file plus exactly one final `STATUS: approved`; pending or aborted outcomes write no file.
+
+## Step Completion Report
+
+```text
+◆ Website Improvement PRD
+··································································
+  Inputs validated:     √ pass | × fail ([reason])
+  Changes evidenced:   √ pass ([count])
+  Targets measurable:  √ pass
+  User approved:       √ pass | × pending
+  prd.md saved:        √ pass ([absolute path]) | — not approved
+  Result:              PASS | BLOCKED | FAIL
+```
+
+Report `PASS` only when the return contract's file and final status-line conditions both hold.
+
+## Edge Cases and Error Handling
 
 | Failure | Behavior |
 |---|---|
 | No input files provided | Ask for report.md and analysis.json paths |
 | Invalid input format | Report error and ask for valid files |
+| Report and analysis conflict | Cite both values and ask which approved baseline governs |
+| Missing baseline metric | Propose a qualitative change or mark the target unavailable; never invent a number |
 | User never approves | Keep looping; do not auto-save |
 
