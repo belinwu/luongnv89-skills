@@ -1,10 +1,10 @@
 ---
 name: cli-builder
-description: "Build a production-quality CLI tool for any module or application. Auto-detects language, recommends CLI libraries, and follows a 5-step approval-gated workflow: Analyze, Design, Plan, Execute, Summarize. Don't use for building GUI/TUI apps, web APIs, or authoring one-off shell scripts."
+description: "Build production-quality CLIs with language detection and a five-step approval-gated workflow. Use when wrapping an existing module or app. Don't use for GUI/TUI apps, web APIs, or one-off shell scripts."
 license: MIT
 effort: high
 metadata:
-  version: 1.0.4
+  version: 1.0.5
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 

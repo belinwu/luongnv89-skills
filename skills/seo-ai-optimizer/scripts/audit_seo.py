@@ -527,9 +527,11 @@ def detect_framework(project_root):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python audit_seo.py <project-root> [--max-files N]")
-        print("\nScans HTML/template files for SEO and AI bot issues.")
-        print("Outputs a JSON report to stdout.")
+        print(
+            "Error: missing required <project-root> input. "
+            "Run `python audit_seo.py <project-root> [--max-files N]`.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     project_root = sys.argv[1]
@@ -541,11 +543,19 @@ def main():
             try:
                 max_files = int(sys.argv[idx + 1])
             except ValueError:
-                print(f"Error: --max-files must be a number, got '{sys.argv[idx + 1]}'")
+                print(
+                    f"Error: --max-files must be an integer, got {sys.argv[idx + 1]!r}. "
+                    "Replace it with a positive number such as `--max-files 50`.",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
 
     if not Path(project_root).exists():
-        print(f"Error: Project root not found: {project_root}")
+        print(
+            f"Error: project root does not exist: {project_root!r}. "
+            "Pass the path to an existing web project directory.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     audit_project(project_root, max_files)

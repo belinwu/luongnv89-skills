@@ -1,11 +1,11 @@
 ---
 name: website-builder
-description: "Execute the approved tasks.md to build a Vite + React + shadcn/ui + Tailwind CSS website deployable to GitHub Pages. Collects assets from the original site and creates new assets per plan. Emits builder metadata for the final report. Use when asked to build, implement, or code a website from a plan. Don't use for design review or planning — those are upstream phases."
+description: "Build an approved Vite/React/Tailwind plan, collect assets, verify static output, deploy to GitHub Pages, and emit metadata. Use for implementing tasks.md. Don't use for design review, planning, backend services, or unapproved specs."
 license: MIT
 effort: high
 metadata:
-  version: 1.0.2
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.2.0
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Builder
@@ -52,7 +52,13 @@ Do **not** use for design review or planning — those are upstream phases.
 
 ## Repo Sync Before Edits (mandatory)
 
-Before modifying any project files:
+Choose the repository branch before modifying project files:
+
+1. **Existing git worktree with `origin`:** preserve dirty changes, then sync before edits.
+2. **New project with no git repository or remote:** skip fetch/pull, initialize the project, and add the approved remote only during deployment.
+3. **Existing repository with an unexpectedly missing `origin`:** stop and ask; do not assume it is a new project.
+
+For the existing-worktree branch, run:
 
 ```bash
 branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -69,7 +75,7 @@ git fetch origin && git pull --rebase origin "$branch"
 git stash pop
 ```
 
-If origin is missing or rebase fails, stop and ask.
+If rebase or stash restoration fails, stop and ask. Never discard user changes.
 
 ## Step 1: Read the Plan
 
@@ -199,6 +205,24 @@ Write a JSON metadata file for the final report phase:
 ```
 
 Write to: `$PROJECT_DIR/builder-metadata.json`
+
+## Acceptance Criteria
+
+Verify the expected output before deployment is marked complete:
+
+- `npm run build` exits 0 and the configured static output directory exists.
+- Every approved task is represented in `tasks_completed` or named in `deviations`; assert `tasks_completed <= tasks_total`.
+- Internal routes and collected asset paths resolve under the GitHub Pages base path.
+- `builder-metadata.json` parses and contains the URL, task counts, asset lists, deviations, output size, and exact tech stack.
+- The reported Pages URL responds successfully after deployment, or the report is `PARTIAL` with the deployment error.
+- No credentials, local paths, or secret environment values appear in generated assets or metadata.
+
+## Edge Cases
+
+- Existing repository or remote: inspect `git status` and `git remote -v`; confirm the target before changing either.
+- Dirty working tree: preserve user changes and follow the mandatory sync guardrail; never discard them.
+- Build succeeds but deployment fails: keep the verified local build, record the error, and return `PARTIAL`.
+- A task conflicts with the approved PRD: stop that task and ask; do not silently reinterpret the plan.
 
 ## Step Completion Reports
 

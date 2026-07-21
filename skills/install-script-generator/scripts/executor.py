@@ -343,6 +343,10 @@ def main():
     plan_file = Path(args.plan)
     if not plan_file.exists():
         print(f"Error: Plan file not found: {plan_file}", file=sys.stderr)
+        print(
+            "Generate it with plan_generator.py or pass the correct path with --plan.",
+            file=sys.stderr,
+        )
         return 1
 
     with open(plan_file) as f:
@@ -363,7 +367,14 @@ def main():
             f.write(markdown)
         print(f"Report saved to: {output_file}")
 
-    return 0 if report["success"] else 1
+    if not report["success"]:
+        print(
+            f"Error: plan {plan_file} failed at step {report['failed_step']}. "
+            "Inspect the report and command error above, fix that step, then rerun --dry-run.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

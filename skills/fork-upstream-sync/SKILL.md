@@ -4,13 +4,22 @@ description: "Sync a GitHub fork with upstream while keeping unmerged feature br
 license: MIT
 effort: medium
 metadata:
-  version: 1.0.3
+  version: 1.3.0
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 
 # Fork Upstream Sync
 
 **Integration main** means fork `main` = `upstream/main` plus your unmerged commits in linear history (not a merge commit that duplicates feature work).
+
+## Prerequisites
+
+Before selecting a path, validate all requirements:
+
+- **Tools:** require Git 2.30+; require `gh` only for PR-state checks.
+- **Access:** confirm authenticated fetch and push access to `origin`, plus fetch access to `upstream`.
+- **State:** check that the working tree is clean or stashable and that the target branches are not checked out in another worktree.
+- **Recovery:** record the current branch and SHA. If fetch, stash, rebase, reset, or push fails, stop at that command; never continue with stale assumptions.
 
 ## Branch selector
 
@@ -106,17 +115,9 @@ git push origin main --force-with-lease
 
 ---
 
-## Routine cheat sheet
+## Verify with the command reference
 
-```bash
-git fetch upstream origin
-git checkout <feature-branch> && git rebase upstream/main
-git push origin <feature-branch> --force-with-lease
-git checkout main && git reset --hard upstream/main
-git merge --ff-only <feature-branch> && git push origin main --force-with-lease
-```
-
-If `--ff-only` fails, do not push — re-run the rebase step against the current `upstream/main`, then retry.
+Protect the context budget: read `references/command-checks.md` only when executing or diagnosing a path. See that reference for the routine command sequence and exact SHA, ancestry, ahead-count, and clean-tree checks.
 
 ## What not to do
 
@@ -124,9 +125,28 @@ If `--ff-only` fails, do not push — re-run the rebase step against the current
 - Do not force-push without `--force-with-lease`.
 - Do not treat `origin` as upstream; `origin` is your fork, `upstream` is the parent.
 
-## Optional verification
+## Acceptance criteria
+
+Verify the selected path before reporting success:
+
+- [ ] Required remotes resolve and the working tree has no unresolved conflicts.
+- [ ] The expected branch ancestry or equality check for the selected path passes.
+- [ ] Every push used `--force-with-lease`; no destructive push targeted the wrong branch.
+- [ ] For Path B, the PR response is `MERGEABLE`, or CI delay is explicitly reported as partial.
+
+Run:
 
 ```bash
 git log --oneline -1 upstream/main main <feature-branch>
 git rev-list --count upstream/main..main
+git merge-base --is-ancestor upstream/main main
 ```
+
+**Expected output:** the log identifies the intended tips, the ahead count equals the retained feature commits, and the ancestry command exits 0. For Paths C and D, also assert the exact SHA equality required by that path.
+
+## Edge cases
+
+- **Renamed default branch:** discover it with `gh repo view --json defaultBranchRef`; do not assume `main`.
+- **Protected fork branch:** if GitHub rejects a lease-protected push, stop and report the protection rule; do not weaken it.
+- **Deleted PR branch:** recreate only from a verified local or remote SHA after user confirmation.
+- **Upstream rewrote history:** fetch, compare old and new tips, and ask before rebasing or resetting across the rewrite.

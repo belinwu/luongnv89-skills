@@ -1,11 +1,11 @@
 ---
 name: website-implementation-plan
-description: "Turn approved prd.md into a phased implementation plan with landing page first, asset collection vs creation, individual tasks. Writes tasks.md after user approval. Use when asked to plan website implementation, create an implementation plan, or break down a PRD into tasks. Don't use for building or coding — that's a separate phase."
+description: "Generate phased tasks.md from an approved website PRD, with landing page first, measurable tasks, and collect/create asset tracking. Use for implementation planning. Don't use for coding, design review, unapproved PRDs, or direct deployment."
 license: MIT
 effort: high
 metadata:
-  version: 1.1.0
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.3.1
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Implementation Plan
@@ -35,6 +35,8 @@ Do **not** use for building or coding — that is Phase 5 (website-builder).
 ```
 
 ## Output: tasks.md Structure
+
+Use the tasks.md template below as the only output template. Read only the PRD sections needed for the current phase to preserve the context budget.
 
 ```markdown
 # Implementation Plan: <site name>
@@ -236,10 +238,38 @@ The orchestrator MUST NOT advance to Phase 5 unless the outcome is `approved`.
 A standalone invocation may ignore the status line, but the file-existence rule
 still holds: no approval, no `tasks.md`.
 
-## Error Handling
+## Acceptance Criteria and Expected Output
+
+Verify the complete plan before requesting approval:
+
+- Every in-scope PRD requirement maps to at least one numbered task or an explicitly justified exclusion.
+- Phase 1 produces an independently usable landing page; later phases preserve dependency order.
+- Every task has bounded scope, concrete outputs, measurable acceptance criteria, and all required assets classified as `[Collect]` or `[Create]`.
+- Asset Summary contains every asset named by a task exactly once with a source and action.
+- The expected result is valid markdown at the approved path plus exactly one final `STATUS: approved`; pending or aborted outcomes write no file.
+
+## Step Completion Report
+
+```text
+◆ Implementation Plan
+··································································
+  Approved PRD:         √ pass | × fail ([reason])
+  Landing page first:  √ pass
+  Tasks measurable:    √ pass ([count])
+  Assets classified:   √ pass ([collect]/[create])
+  User approved:       √ pass | × pending
+  tasks.md saved:      √ pass ([absolute path]) | — not approved
+  Result:              PASS | BLOCKED | FAIL
+```
+
+Report `PASS` only when the return contract's file and final status-line conditions both hold.
+
+## Edge Cases and Error Handling
 
 | Failure | Behavior |
 |---|---|
 | No prd.md provided | Ask for the PRD file path |
 | Invalid PRD format | Report error and ask for valid file |
+| Conflicting PRD requirements | Surface the conflict and ask before task decomposition |
+| No assets required | Include an empty Asset Summary and state that no collection or creation is needed |
 | User never approves | Keep looping; do not auto-save |

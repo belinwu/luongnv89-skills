@@ -4,7 +4,7 @@ description: "Generate a diagram and route to the right engine — draw.io XML (
 license: MIT
 effort: high
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -41,22 +41,49 @@ of filesystem path:
 Each engine owns its full workflow, `references/`, `agents/`, and validation checks. This umbrella
 stays short to protect the agent's context budget; it only routes.
 
-## Layout
+## Prerequisites
 
-This umbrella and its engines live together in one suite folder:
+1. Confirm at least one nested engine is installed and callable.
+2. Require enough diagram content to identify nodes, relationships, and intended audience; ask for
+   missing essentials before routing.
+3. Check whether the requested output path already exists. Let the selected engine run its own
+   confirmation, backup, dry-run, error, and rollback safeguards before any overwrite.
 
+If neither engine is available, fail with an installation error and name both required skills. Never
+invent XML or JSON under the wrong engine as a fallback.
+
+## Example
+
+```text
+Input: "Draw a sketchy onboarding wireframe for mobile."
+Route: excalidraw-generator
+Expected output: one validated .excalidraw JSON artifact
 ```
-skills/diagram-generator/            ← this umbrella (router)
-├── SKILL.md                         ← you are here
-├── drawio-generator/                ← draw.io XML engine
-└── excalidraw-generator/            ← Excalidraw JSON engine
+
+## Acceptance Criteria
+
+Verify every routed run:
+
+- Exactly one engine is selected unless the user explicitly requests both formats.
+- The selected engine matches the requested format, editing target, or aesthetic.
+- The nested workflow reaches its Validate phase and produces its expected output artifact.
+- The artifact passes the engine's structural checks; validation errors are reported, not hidden.
+- Existing files are not overwritten without the selected engine's required confirmation or backup.
+
+## Step Completion Reports
+
+After routing, emit:
+
+```text
+◆ Route Diagram
+  Engine available:    √ pass
+  Route justified:     √ pass
+  Output validated:    √ pass
+  Result:              PASS | FAIL | PARTIAL
 ```
 
-Why nested: both engines serve one intent ("make a diagram") and differ only by output format, so a
-single entry point removes the "which diagram skill do I use?" decision. Each engine stays
-independently installable — the installers (`install.sh`, `remote-install.sh`) discover both
-top-level and nested skills. This mirrors the `website-cloner` suite convention (see README
-*Suite Folders*).
+Use `× fail — reason` when a check fails. Report PASS only after the nested engine's acceptance
+criteria and expected result are verified.
 
 ## Edge Cases
 

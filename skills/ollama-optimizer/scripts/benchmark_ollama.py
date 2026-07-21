@@ -180,17 +180,31 @@ def main():
     # Check Ollama is running
     stdout, _, code = run_command(["ollama", "ps"])
     if code != 0:
-        print(json.dumps({"error": "Ollama is not running. Start it with 'ollama serve'"}))
+        print(
+            json.dumps({"error": "Ollama check failed for 'ollama ps'. Start it with 'ollama serve' and retry."}),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     models = get_ollama_models()
     if not models:
-        print(json.dumps({"error": "No models installed. Install a model with 'ollama pull <model>'"}))
+        print(
+            json.dumps({"error": "No models returned by 'ollama list'. Install one with 'ollama pull <model>' and retry."}),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if args.model:
         if args.model not in models:
-            print(json.dumps({"error": f"Model '{args.model}' not found. Available: {models}"}))
+            print(
+                json.dumps({
+                    "error": (
+                        f"Requested model '{args.model}' was not found. Available: {models}. "
+                        "Choose an available model or run 'ollama pull <model>', then retry."
+                    )
+                }),
+                file=sys.stderr,
+            )
             sys.exit(1)
         models_to_test = [args.model]
     elif args.all:

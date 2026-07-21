@@ -4,7 +4,7 @@ description: "Generate cross-platform install scripts for any software or librar
 license: MIT
 effort: high
 metadata:
-  version: 2.2.0
+  version: 2.2.1
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 

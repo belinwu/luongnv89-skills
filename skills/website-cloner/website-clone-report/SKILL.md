@@ -1,11 +1,11 @@
 ---
 name: website-clone-report
-description: "Convert website analyzer output into a comprehensive plain-language report for non-technical users. Prompts for validation before persisting. Use when asked to report on a website analysis, create an end-user report, or translate technical metrics into plain language. Don't use for technical audit reports targeting developers, raw SEO audits, or penetration testing. Approval gate: never saves without explicit user approval."
+description: "Generate a plain-language report from website-analyzer JSON and save it only after explicit approval. Use for non-technical summaries. Don't use for developer audits, raw SEO analysis, penetration testing, or unapproved persistence."
 license: MIT
 effort: high
 metadata:
-  version: 1.0.2
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.2.1
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Clone Report
@@ -20,6 +20,13 @@ Trigger when the user asks to:
 - Produce an end-user summary of a site assessment
 
 Do **not** use for technical audit reports targeting developers — those belong to the analyzer skill.
+
+## Prerequisites
+
+1. Require valid website-analyzer JSON and a proposed output path.
+2. Read `references/api_reference.md` when validating fields or translating metrics; use only the needed reference mappings to protect the context budget.
+3. Confirm the user can review the draft and explicitly approve persistence.
+4. Stop with a descriptive error when the JSON is invalid or contains an analyzer `error` variant.
 
 ## Workflow
 
@@ -171,11 +178,38 @@ After the `Write` call returns, confirm to the user:
 Report saved to: <absolute-path>
 ```
 
-## Error Handling
+## Acceptance Criteria and Expected Output
+
+Verify the approved report before saving:
+
+- It covers UI/UX, category, style, performance, surface security, SEO, and next steps, or names each unavailable dimension.
+- Every metric and observation traces to the analyzer JSON; assert that no unsupported benchmark or claim was invented.
+- Language is understandable without developer terminology, while the security and single-page-crawl caveats remain explicit.
+- The expected result is a non-empty approved markdown file at the resolved path, written only after explicit approval such as `Approve`.
+- Re-read the saved file state or Write result and report its absolute path.
+
+## Edge Cases and Error Handling
 
 | Failure | Behavior |
 |---|---|
 | No analyzer input provided | Ask for the analysis JSON file path |
 | Invalid JSON | Report error and ask for valid input |
+| Analyzer error variant | Surface its `error` and `detail`; do not draft a health report |
+| Missing or null dimension | Omit unsupported specifics and identify the gap in next steps |
 | User never approves | Keep the loop going; do not auto-save |
+
+## Step Completion Report
+
+```text
+◆ Website Clone Report
+··································································
+  Analyzer JSON:        √ pass | × fail ([reason])
+  Six dimensions:      √ translated | × partial ([missing])
+  Draft reviewed:      √ pass
+  User approved:       √ pass | × pending
+  Report saved:        √ pass ([absolute path]) | — not approved
+  Result:              PASS | BLOCKED | FAIL
+```
+
+Never report `PASS` before both explicit approval and a successful Write result.
 

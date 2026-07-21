@@ -765,7 +765,11 @@ def main():
             for path in missing_paths:
                 print(f"✗ Path not found: {path}", file=sys.stderr)
         else:
-            print("○ No supported images found.", file=sys.stderr)
+            print("○ No supported images found in the supplied paths.", file=sys.stderr)
+        print(
+            "Pass an existing PNG, JPEG, GIF, WebP, or BMP path; add --recursive for directories.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if not args.quiet:
@@ -796,6 +800,10 @@ def main():
     if not analyses and errors:
         for path, err in errors:
             print(f"✗ {path}: {err}", file=sys.stderr)
+        print(
+            "Use a readable, non-empty supported image and retry; inspect the per-path errors above.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Build report

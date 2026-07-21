@@ -1,10 +1,10 @@
 ---
 name: logo-designer
-description: "Generate professional SVG logos from project context, producing 7 brand variants (mark, full, wordmark, icon, favicon, white, black) plus a showcase HTML page. Skip for raster-only logos, product illustrations, or full brand-guideline docs."
+description: "Generate professional SVG logos from project context: 7 brand variants plus a showcase HTML page. Use for product marks, wordmarks, icons, and favicons. Don't use for raster-only logos, illustrations, or full brand guidelines."
 license: MIT
 effort: medium
 metadata:
-  version: 1.2.2
+  version: 1.2.3
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 
@@ -29,8 +29,8 @@ This skill uses an **Explorer+Executor (A) + Review Loop (C)** architecture:
 Phase 1: Brand Research
   ↓ (brand-researcher agent)
   ↓
-Phase 2-3: SVG Generation (Interactive Style Selection)
-  ↓ Main agent: interactive style selection with user
+Phase 2: Interactive Style Selection
+  ↓ Main agent: confirm style selection with user
   ↓
 Phase 3: Generate All 7 SVGs
   ↓ (svg-generator agent)

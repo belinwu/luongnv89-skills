@@ -1,11 +1,11 @@
 ---
 name: website-clone-final-report
-description: "Produce a before/after comparison report of a website clone project. Uses Phase 1 analysis as baseline and builder metadata as 'after' snapshot. Covers performance, SEO, security, UI/UX deltas, deviations, and GitHub Pages URL. Use when asked for a final report, before-after comparison, or project closure summary of a website clone. Don't use for ongoing monitoring or live site audits."
+description: "Generate a website-clone closure report comparing baseline analysis, builder metadata, planned tasks, and implemented results. Use after a completed rebuild. Don't use for live audits, ongoing monitoring, implementation, or speculative metrics."
 license: MIT
 effort: high
 metadata:
-  version: 1.0.1
-  author: Luong NGUYEN <luongnv89@gmail.com>
+  version: 1.2.3
+  author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Website Clone Final Report
@@ -34,6 +34,8 @@ Do **not** use for ongoing monitoring or live site audits — those are separate
 ```
 
 ## Output: final-report.md Structure
+
+Use the report template below as the only output template. Read only the source sections needed for each comparison to preserve the context budget.
 
 ```markdown
 # Final Report: <site name> Clone
@@ -192,7 +194,32 @@ Final report saved to: <absolute-path>
 GitHub Pages URL: <url>
 ```
 
-## Error Handling
+## Acceptance Criteria and Expected Output
+
+Verify the report before saving:
+
+- Every source file is named as present or missing; no absent input is silently treated as evidence.
+- For each metric with both before and after values, show the formula, unit, and correctly rounded delta; mark unavailable after-values explicitly and never invent them.
+- Each qualitative claim cites an implemented task, builder deviation, or baseline observation.
+- `final-report.md` contains implementation summary, performance, SEO, security, UI/UX, deviations, caveats, and Pages URL sections.
+- The expected result is `PASS` when the saved markdown is non-empty and every available comparison is supported; unavailable metrics are explained rather than treated as failures.
+
+## Step Completion Report
+
+```text
+◆ Final Comparison Report
+··································································
+  Inputs accounted for: √ pass | × partial ([missing])
+  Deltas verified:      √ pass | × partial ([unavailable])
+  Deviations compared:  √ pass
+  Report saved:         √ pass ([absolute path])
+  Pages URL:            √ pass | × unavailable
+  Result:               PASS | PARTIAL | FAIL
+```
+
+Use `PASS` only when every required input is accounted for and each available comparison is supported. Missing required inputs force `PARTIAL`; unavailable optional metrics are labeled, and a write failure is `FAIL`.
+
+## Edge Cases and Error Handling
 
 | Failure | Behavior |
 |---|---|

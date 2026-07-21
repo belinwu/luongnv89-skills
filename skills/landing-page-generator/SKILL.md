@@ -1,10 +1,10 @@
 ---
 name: landing-page-generator
-description: "Generate landing pages with PAS, AIDA, or StoryBrand — marketing copy from a product brief, or a scannable landing-page rewrite of an existing README. The one skill for landing-page work. Not for blog posts, UX audits, or HTML builds."
+description: "Generate landing pages with PAS, AIDA, or StoryBrand from a product brief or existing README. Use for sales copy, hero sections, CTAs, or README rewrites. Don't use for blog posts, UX audits, or HTML builds."
 license: MIT
 effort: high
 metadata:
-  version: 1.2.0
+  version: 1.2.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
