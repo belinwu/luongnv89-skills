@@ -4,7 +4,25 @@ Patterns the SKILL.md points to when a task goes beyond the basic send → wait 
 
 ## Resolve scripts/
 
-Prefer probing install locations over `scripts/...` relative to cwd (see SKILL.md "Resolve scripts/"). Examples below assume `$here` already points at the skill's `scripts/` directory.
+Probe known install locations because the caller's working directory is not guaranteed. Repo-local copies win:
+
+```bash
+here=""
+for cand in \
+  "skills/tmux-agent-comms/scripts" \
+  ".agents/skills/tmux-agent-comms/scripts" \
+  ".claude/skills/tmux-agent-comms/scripts" \
+  "$HOME/.claude/skills/tmux-agent-comms/scripts" \
+  "$HOME/.agents/skills/tmux-agent-comms/scripts"; do
+  if [ -f "$cand/wait_for_idle.py" ]; then here="$cand"; break; fi
+done
+[ -n "$here" ] || {
+  echo "Error: tmux-agent-comms helpers not found in known install locations." >&2
+  exit 1
+}
+```
+
+Reuse `$here` for `preflight_send.py`, `wait_for_idle.py`, and `broadcast.sh`.
 
 ## Concurrent readiness pass (after fleet spawn)
 
