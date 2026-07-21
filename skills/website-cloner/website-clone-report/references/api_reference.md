@@ -27,9 +27,9 @@ The skill expects JSON in this shape (see `skills/website-cloner/website-analyze
     "aesthetic": "vibe description"
   },
   "performance": {
-    "lcp_estimate": 2.5,
+    "lcp_estimate_seconds": 2.5,
     "cls_estimate": 0.05,
-    "ttfb_estimate": 0.3,
+    "ttfb_estimate_seconds": 0.3,
     "total_page_weight_kb": 1200,
     "request_count": 45,
     "notes": "estimated from static analysis"
@@ -80,8 +80,9 @@ Error variant (skill should report and stop, not produce a report):
 | `style.palette` | Design and Style | Translate hex to color families: "cool blues and grays with orange accents". |
 | `style.spacing` | Design and Style | "compact" → "densely packed"; "spacious" → "lots of breathing room". |
 | `style.motion` | Design and Style | "heavy" → "lots of animation"; "minimal" → "very little movement". |
-| `performance.lcp_estimate` | Performance | "How fast content appears". Benchmarks: < 2.5s good, 2.5–4s fair, > 4s slow. |
-| `performance.cls_estimate` | Performance | "How stable the page feels while loading". < 0.1 stable, ≥ 0.25 jumpy. |
+| `performance.lcp_estimate_seconds` | Performance | "How fast content appears". This is an estimate in seconds; benchmarks: < 2.5s good, 2.5–4s fair, > 4s slow. |
+| `performance.cls_estimate` | Performance | "How stable the page feels while loading". This estimate is unitless; < 0.1 stable, ≥ 0.25 jumpy. |
+| `performance.ttfb_estimate_seconds` | Performance | "How quickly the server responds". This is an estimate in seconds; label it as estimated. |
 | `performance.total_page_weight_kb` | Performance | "How much data the page uses". Compare to images: "≈ N average photos worth". |
 | `performance.request_count` | Performance | "Number of pieces the page needs to load". |
 | `security.https` / `mixed_content` | Security Overview | HTTPS + no mixed content → "encrypted from end to end". |

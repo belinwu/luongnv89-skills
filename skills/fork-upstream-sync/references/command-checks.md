@@ -5,7 +5,8 @@ Use these commands after selecting a path; replace placeholders before running t
 ## Routine sync
 
 ```bash
-git fetch upstream origin
+git fetch upstream
+git fetch origin
 git checkout <feature-branch>
 git rebase upstream/<default-branch>
 git push origin <feature-branch> --force-with-lease

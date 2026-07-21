@@ -4,7 +4,7 @@ description: "Generate a diagram and route to the right engine — draw.io XML (
 license: MIT
 effort: high
 metadata:
-  version: 1.1.0
+  version: 1.1.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -49,8 +49,14 @@ stays short to protect the agent's context budget; it only routes.
 3. Check whether the requested output path already exists. Let the selected engine run its own
    confirmation, backup, dry-run, error, and rollback safeguards before any overwrite.
 
-If neither engine is available, fail with an installation error and name both required skills. Never
-invent XML or JSON under the wrong engine as a fallback.
+If the user explicitly requested a format, tool, editing target, or aesthetic and its engine is unavailable,
+stop and explain which nested skill must be installed; provide the matching command
+(`asm install github:luongnv89/skills:skills/diagram-generator/drawio-generator` or
+`asm install github:luongnv89/skills:skills/diagram-generator/excalidraw-generator`) and ask the user to
+install it or explicitly change the requested output. Do not substitute the other engine. If no format or aesthetic was explicit, an available
+engine may be offered as a fallback only after explaining the output difference and receiving user approval.
+If neither engine is available, fail with an installation error and name both required skills. Never invent
+XML or JSON under the wrong engine as a fallback.
 
 ## Example
 
@@ -88,5 +94,6 @@ criteria and expected result are verified.
 ## Edge Cases
 
 - **User explicitly wants both formats** — generate with one engine first, then offer to regenerate the same diagram in the other.
-- **Ambiguous, no answer to the routing question** — default to draw.io and note the choice; the user can ask for an Excalidraw version.
-- **A nested engine is not installed** — fall back to the one that is, and note the limitation.
+- **Ambiguous, no answer to the routing question** — default to draw.io only when it is available; note the choice so the user can request an Excalidraw version.
+- **Explicitly requested engine is unavailable** — do not fall back. Report the unavailable nested skill, provide its installation guidance, and ask the user to install it or explicitly approve a different format/aesthetic.
+- **No explicit format and the selected engine is unavailable** — offer the installed engine as an alternative, explain its format/aesthetic, and route only after explicit user approval.

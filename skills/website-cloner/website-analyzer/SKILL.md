@@ -4,7 +4,7 @@ description: "Analyze a website's UI/UX, category, style, performance, surface s
 license: MIT
 effort: high
 metadata:
-  version: 1.2.1
+  version: 1.3.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -65,9 +65,9 @@ Produce structured JSON at the requested output path (or stdout):
     "aesthetic": "vibe description"
   },
   "performance": {
-    "lcp_estimate": 2.5,
+    "lcp_estimate_seconds": 2.5,
     "cls_estimate": 0.05,
-    "ttfb_estimate": 0.3,
+    "ttfb_estimate_seconds": 0.3,
     "total_page_weight_kb": 1200,
     "request_count": 45,
     "notes": "estimated from static analysis"
@@ -133,9 +133,9 @@ From fetched content, extract:
 |--------|--------|
 | Page weight | Sum of referenced resource sizes; estimate image sizes from layout |
 | Request count | Count `<img>`, `<link rel="stylesheet">`, `<script>`, font refs |
-| LCP | Inferred from above-fold content size; min 0.5s for bare HTML |
-| CLS | Estimated from layout shift indicators (missing dimensions, late loaders) |
-| TTFB | Inferred from hosting signals; static → low, dynamic → moderate |
+| LCP (`lcp_estimate_seconds`) | Inferred from above-fold content size; seconds, with a 0.5-second minimum for bare HTML |
+| CLS (`cls_estimate`) | Estimated from layout shift indicators (missing dimensions, late loaders); unitless |
+| TTFB (`ttfb_estimate_seconds`) | Inferred from hosting signals; seconds; static → low, dynamic → moderate |
 
 All metrics are estimates from static analysis. Note this in output.
 
@@ -185,7 +185,7 @@ Verify the expected output before reporting success:
 
 - JSON parses and contains `url`, `timestamp`, `ui_ux`, `category`, `style`, `performance`, `security`, and `seo`.
 - `seo.score` is an integer from 0 through 100 and matches the weighted, null-adjusted dimension calculation.
-- Performance estimates include units or `_kb` suffixes and an explicit static-analysis limitation.
+- Performance estimates use `lcp_estimate_seconds`, unitless `cls_estimate`, `ttfb_estimate_seconds`, and `total_page_weight_kb`, plus an explicit static-analysis limitation.
 - Every unavailable measurement is `null` or an error field, never an invented value.
 - The output is written to the requested destination; assert the file exists and can be parsed when a path is supplied.
 

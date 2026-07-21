@@ -4,7 +4,7 @@ description: "Generate a plain-language report from website-analyzer JSON and sa
 license: MIT
 effort: high
 metadata:
-  version: 1.2.1
+  version: 1.2.2
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -86,6 +86,7 @@ Translate metrics to plain language:
   For comparison, sites that load in under 2 seconds tend to keep visitors engaged."
 - **Visual stability:** "The page layout is mostly stable while loading.
   You're unlikely to notice elements jumping around."
+- **How quickly the server responds:** "The estimated server response delay is X seconds."
 - **How much data it uses:** "The page weighs about X KB, roughly equivalent to
   loading Y average-sized images."
 - **Number of resources:** "The page makes about X requests to load."
@@ -136,8 +137,9 @@ For each dimension:
 - **Category**: Explain what kind of site it is in plain terms.
 - **Style**: Describe the feel and look without needing CSS knowledge.
 - **Performance**: Translate numbers to relatable comparisons:
-  - LCP: "how fast the main content appears"
-  - CLS: "how stable the page feels while loading"
+  - `lcp_estimate_seconds`: "how fast the main content appears" (estimated seconds)
+  - `cls_estimate`: "how stable the page feels while loading" (unitless)
+  - `ttfb_estimate_seconds`: "how quickly the server responds" (estimated seconds)
   - Page weight: "how much data the page uses"
   - Request count: "how many pieces the page needs to load"
 - **Security**: Surface-level observations only, no technical headers jargon.

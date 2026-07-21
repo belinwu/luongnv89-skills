@@ -4,7 +4,7 @@ description: "Build an improved website clone from a URL via 6-phase gated workf
 license: MIT
 effort: high
 metadata:
-  version: 1.1.6
+  version: 1.2.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -44,7 +44,7 @@ Phase 6 — Final Report   → website-clone-final-report
 
 Approval gates after Phase 2, 3, and 4: the orchestrator **must not advance** without explicit user approval.
 
-**Artifacts** (each written once, then referenced by name in the phases below): `analysis.json` — Phase 1's structured findings; `report.md` — Phase 2's plain-language summary; `prd.md` — Phase 3's improvement proposal; `tasks.md` — Phase 4's phased implementation plan; `builder-metadata.json` — Phase 5's build-output metadata (asset counts, Pages URL) consumed by Phase 6.
+**Artifacts** (each written once, then referenced by name in the phases below): `analysis.json` — Phase 1's structured findings; `report.md` — Phase 2's plain-language summary; `prd.md` — Phase 3's improvement proposal; `tasks.md` — Phase 4's phased implementation plan; `builder-metadata.json` — Phase 5's build metadata, Pages URL, and structured post-deployment performance/SEO/security snapshot consumed by Phase 6; `after-analysis.json` — the comparable Phase 5 re-audit source.
 
 ## Layout
 
@@ -103,7 +103,7 @@ Invoke `website-analyzer` with the URL:
 /website-analyzer <url> --output "$PROJECT_DIR/analysis.json"
 ```
 
-The analyzer produces a structured analysis covering: UI/UX, category, style, performance (LCP, CLS, TTFB, page weight, request count), surface-level security, and SEO (overall score + per-dimension breakdown).
+The analyzer produces a structured analysis covering: UI/UX, category, style, performance (`lcp_estimate_seconds`, unitless `cls_estimate`, `ttfb_estimate_seconds`, page weight in KB, and request count), surface-level security, and SEO (overall score + per-dimension breakdown).
 
 **Check:** Analysis file exists and covers all 6 dimensions. If any dimension is missing, note it but continue — partial results are acceptable for Phase 2.
 
@@ -204,7 +204,7 @@ Invoke `website-builder` with `tasks.md` and `prd.md`:
 /website-builder "$PROJECT_DIR/tasks.md" "$PROJECT_DIR/prd.md" --output "$PROJECT_DIR/"
 ```
 
-This skill executes the plan, builds the site (Vite + React + shadcn/ui + Tailwind), and deploys static assets. It should emit metadata for Phase 6.
+This skill executes the plan, builds the site (Vite + React + shadcn/ui + Tailwind), deploys static assets, then re-runs `website-analyzer` against the responsive Pages URL. It emits the structured after snapshot in metadata for Phase 6. If deployment or the re-audit is incomplete, Phase 5 must return `PARTIAL` and preserve nulls/errors rather than inventing metrics.
 
 **Step Completion Report:**
 
@@ -214,9 +214,10 @@ This skill executes the plan, builds the site (Vite + React + shadcn/ui + Tailwi
   Landing page built:   √ pass
   Assets collected:     √ pass (<N> assets)
   Assets created:       √ pass (<N> assets)
-  GitHub Pages URL:     √ pass (<url>)
+  GitHub Pages URL:     √ pass (<url>) | × unavailable
+  After metrics:        √ complete | × partial ([performance/SEO/security gaps])
   ____________________________
-  Result:               PASS | PARTIAL
+  Result:               PASS | PARTIAL | FAIL
 ```
 
 ## Phase 6: Final Comparison Report
@@ -227,7 +228,7 @@ Invoke `website-clone-final-report` with the analysis baseline and builder metad
 /website-clone-final-report "$PROJECT_DIR/analysis.json" "$PROJECT_DIR/builder-metadata.json" --output "$PROJECT_DIR/final-report.md"
 ```
 
-This skill produces a before/after comparison covering performance, SEO, security, UI/UX deltas, deviations, and the GitHub Pages URL.
+This skill validates the baseline and structured post-deployment snapshot, then produces a before/after comparison covering performance, SEO, security, UI/UX changes, deviations, and the GitHub Pages URL. It must propagate `PARTIAL` when any required performance, SEO, or security comparison is unavailable.
 
 **Step Completion Report:**
 
@@ -235,11 +236,12 @@ This skill produces a before/after comparison covering performance, SEO, securit
 ◆ Final Report (step 6 of 6 — <site name>)
 ······································································
   final-report.md:      √ pass
-  Performance delta:    √ pass (before→after)
-  SEO delta:            √ pass (before→after)
+  Performance delta:    √ pass (before→after) | × partial ([missing])
+  SEO delta:            √ pass (before→after) | × partial ([missing])
+  Security comparison:  √ pass (before→after) | × partial ([missing])
   Deviations listed:    √ pass | × none
   ____________________________
-  Result:               PASS
+  Result:               PASS | PARTIAL | FAIL
 ```
 
 ## Expected Output
@@ -251,18 +253,22 @@ This skill produces a before/after comparison covering performance, SEO, securit
   Phase 2  Report       √ approved
   Phase 3  Proposal     √ approved (prd.md)
   Phase 4  Plan         √ approved (tasks.md)
-  Phase 5  Build        √ pass
-  Phase 6  Final Report √ pass
+  Phase 5  Build        √ pass | × partial
+  Phase 6  Final Report √ pass | × partial | × fail
+  Overall Result:       PASS | PARTIAL | FAIL
 
   GitHub Pages: https://<user>.github.io/<repo>/
   Project:      <project_dir>
 ```
+
+The overall result is the worst Phase 1–6 result. Never report overall `PASS` when the Phase 5 after snapshot or any Phase 6 required comparison is partial, unavailable, or failed.
 
 ## Edge Cases
 
 - **Unreachable URL**: Stop Phase 1, report error, do not continue. Ask user for a different URL.
 - **JS-heavy SPA with no crawlable content**: Note the limitation in Phase 1, proceed with best-effort analysis. The build phase may need user-supplied assets to compensate.
 - **User denies approval at any gate**: Stop the pipeline. Do not auto-proceed. The user can re-run the skill to resume.
-- **Missing sibling skill**: If a sibling skill is not available, skip that phase and note it in the report. Continue with remaining phases if possible.
-- **Partial Phase 1 results**: If the analyzer returns partial data (e.g., no SEO score), proceed to Phase 2 with a note that the missing dimension was not evaluated.
+- **Missing sibling skill**: If a sibling skill is not available, skip that phase and note it in the report. Continue where possible, but the overall result cannot exceed `PARTIAL`.
+- **Partial Phase 1 results**: If the analyzer returns partial data (e.g., no SEO score), proceed to Phase 2 with a note; Phase 6 and the overall workflow remain `PARTIAL` when a required baseline comparison is unavailable.
+- **Partial Phase 5 re-audit**: Continue to Phase 6 so it can document the gaps, but both Phase 6 and the overall workflow must return `PARTIAL` unless report creation itself fails.
 

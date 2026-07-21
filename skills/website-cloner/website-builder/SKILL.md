@@ -4,7 +4,7 @@ description: "Build an approved Vite/React/Tailwind plan, collect assets, verify
 license: MIT
 effort: high
 metadata:
-  version: 1.2.0
+  version: 1.3.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -27,6 +27,7 @@ Do **not** use for design review or planning — those are upstream phases.
 - `prd.md` (Phase 3 proposal) exists for alignment reference
 - Node.js and npm are available
 - Git is available for repository management
+- `website-analyzer` is installed for the comparable post-deployment audit
 
 ## Tech Stack
 
@@ -47,7 +48,8 @@ Do **not** use for design review or planning — those are upstream phases.
 5. Create new assets as specified
 6. Build and verify
 7. Deploy to GitHub Pages
-8. Emit builder metadata
+8. Re-audit the deployed URL for comparable after metrics
+9. Emit builder metadata
 ```
 
 ## Repo Sync Before Edits (mandatory)
@@ -181,9 +183,24 @@ Configure GitHub Pages:
 
 Report the GitHub Pages URL.
 
-## Step 7: Emit Builder Metadata
+## Step 7: Re-audit the Deployed Site
 
-Write a JSON metadata file for the final report phase:
+After the GitHub Pages URL responds successfully, run the same analyzer used for the baseline:
+
+```text
+/website-analyzer "https://<user>.github.io/<repo>/" --output "$PROJECT_DIR/after-analysis.json"
+```
+
+Require the analyzer's structured `performance`, `seo`, and `security` objects. The comparable
+performance fields are `lcp_estimate_seconds`, unitless `cls_estimate`,
+`ttfb_estimate_seconds`, `total_page_weight_kb`, and `request_count`. Preserve analyzer `null`
+values and caveats; do not turn estimates into measured values. If deployment or the re-audit
+fails, record the error and return `PARTIAL` rather than inventing an after snapshot.
+
+## Step 8: Emit Builder Metadata
+
+Write a JSON metadata file for the final report phase. Copy the post-deployment analyzer objects
+without changing their field names or units:
 
 ```json
 {
@@ -195,6 +212,40 @@ Write a JSON metadata file for the final report phase:
   "assets_created": ["cta-copy.txt", "hero-icon.svg", ...],
   "deviations": [],
   "build_output_size_kb": 450,
+  "after_snapshot_source": "after-analysis.json",
+  "after_snapshot_status": "complete | partial | unavailable",
+  "performance": {
+    "lcp_estimate_seconds": 1.8,
+    "cls_estimate": 0.03,
+    "ttfb_estimate_seconds": 0.2,
+    "total_page_weight_kb": 650,
+    "request_count": 32,
+    "notes": "estimated from static analysis"
+  },
+  "security": {
+    "https": true,
+    "mixed_content": false,
+    "security_headers": ["strict-transport-security"],
+    "exposed_metadata": [],
+    "note": "Surface-level check only. Not a full security audit."
+  },
+  "seo": {
+    "score": 94,
+    "title_tag": "present",
+    "meta_description": "present",
+    "heading_structure": "h1:1 h2:4",
+    "alt_text_coverage": 1.0,
+    "structured_data": "present",
+    "canonical_url": "present",
+    "robots_sitemap": "robots=ok | sitemap=found",
+    "dimension_scores": {
+      "meta_tags": 95,
+      "heading_structure": 85,
+      "image_alt_text": 100,
+      "structured_data": 100,
+      "crawlability": 90
+    }
+  },
   "tech_stack": {
     "bundler": "vite",
     "framework": "react",
@@ -204,7 +255,8 @@ Write a JSON metadata file for the final report phase:
 }
 ```
 
-Write to: `$PROJECT_DIR/builder-metadata.json`
+`build_output_size_kb` is the complete build artifact size, not page weight; never use it as
+`performance.total_page_weight_kb`. Write metadata to `$PROJECT_DIR/builder-metadata.json`.
 
 ## Acceptance Criteria
 
@@ -213,15 +265,17 @@ Verify the expected output before deployment is marked complete:
 - `npm run build` exits 0 and the configured static output directory exists.
 - Every approved task is represented in `tasks_completed` or named in `deviations`; assert `tasks_completed <= tasks_total`.
 - Internal routes and collected asset paths resolve under the GitHub Pages base path.
-- `builder-metadata.json` parses and contains the URL, task counts, asset lists, deviations, output size, and exact tech stack.
-- The reported Pages URL responds successfully after deployment, or the report is `PARTIAL` with the deployment error.
+- `builder-metadata.json` parses and contains the URL, task counts, asset lists, deviations, output size, exact tech stack, after-snapshot status, and structured performance/SEO/security objects.
+- A `PASS` result requires a responsive Pages URL and a complete comparable after snapshot with every required performance field, SEO overall/dimension score, and security check non-null.
+- Deployment, analyzer, or required after-value gaps are recorded and force `PARTIAL`; a metadata write failure is `FAIL`.
 - No credentials, local paths, or secret environment values appear in generated assets or metadata.
 
 ## Edge Cases
 
 - Existing repository or remote: inspect `git status` and `git remote -v`; confirm the target before changing either.
 - Dirty working tree: preserve user changes and follow the mandatory sync guardrail; never discard them.
-- Build succeeds but deployment fails: keep the verified local build, record the error, and return `PARTIAL`.
+- Build succeeds but deployment fails: keep the verified local build, record the error, set the after snapshot unavailable, and return `PARTIAL`.
+- Deployment succeeds but the re-audit is incomplete: preserve nulls and analyzer caveats, set `after_snapshot_status` to `partial`, and return `PARTIAL`.
 - A task conflicts with the approved PRD: stop that task and ask; do not silently reinterpret the plan.
 
 ## Step Completion Reports
@@ -255,7 +309,8 @@ Verify the expected output before deployment is marked complete:
 ······································································
   Repository created:     √ pass
   GitHub Pages configured: √ pass (<url>)
+  After snapshot:         √ complete | × partial ([missing])
   Metadata emitted:       √ pass
   ____________________________
-  Result:                 PASS
+  Result:                 PASS | PARTIAL | FAIL
 ```
