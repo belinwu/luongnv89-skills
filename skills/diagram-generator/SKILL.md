@@ -4,7 +4,7 @@ description: "Generate a diagram and route to the right engine — draw.io XML (
 license: MIT
 effort: high
 metadata:
-  version: 1.1.1
+  version: 1.1.2
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -27,7 +27,7 @@ Routing rules:
 - The user names a format or tool ("draw.io", "diagrams.net", "Excalidraw", "whiteboard sketch") → use that engine.
 - The user names an editing target ("I'll tweak it in draw.io", "import to Confluence") → **draw.io**.
 - The user wants a hand-drawn / sketch / wireframe look → **Excalidraw**.
-- No format signal → ask one question: "Precise and editable (draw.io) or hand-drawn sketch (Excalidraw)?" Default to **draw.io** for architecture/C4/technical diagrams and **Excalidraw** for wireframes/brainstorms if the user says "just pick".
+- No format signal → ask one question: "Precise and editable (draw.io) or hand-drawn sketch (Excalidraw)?" Keep routing blocked until the user answers. Only after explicit delegation such as "just pick", "choose for me", or "use the default", choose **draw.io** for architecture/C4/technical diagrams and **Excalidraw** for wireframes/brainstorms.
 - The user asks for **Mermaid**, a slide deck, or brand/marketing graphics → out of scope; say so (Mermaid is native markdown; use a presentation or design tool for the others).
 
 ## How to use
@@ -94,6 +94,6 @@ criteria and expected result are verified.
 ## Edge Cases
 
 - **User explicitly wants both formats** — generate with one engine first, then offer to regenerate the same diagram in the other.
-- **Ambiguous, no answer to the routing question** — default to draw.io only when it is available; note the choice so the user can request an Excalidraw version.
+- **Ambiguous, no answer to the routing question** — keep routing blocked and ask the question again; silence or timeout is not approval to choose an engine. Apply the routing heuristics only when the user explicitly delegates the choice (for example, "just pick", "choose for me", or "use the default").
 - **Explicitly requested engine is unavailable** — do not fall back. Report the unavailable nested skill, provide its installation guidance, and ask the user to install it or explicitly approve a different format/aesthetic.
 - **No explicit format and the selected engine is unavailable** — offer the installed engine as an alternative, explain its format/aesthetic, and route only after explicit user approval.

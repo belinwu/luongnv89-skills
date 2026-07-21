@@ -4,7 +4,7 @@ description: "Build an approved Vite/React/Tailwind plan, collect assets, verify
 license: MIT
 effort: high
 metadata:
-  version: 1.3.0
+  version: 1.3.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -102,7 +102,19 @@ npm install tailwindcss @tailwindcss/vite
 npm install class-variance-authority clsx tailwind-merge lucide-react
 ```
 
-Configure Tailwind and shadcn/ui. Set up the GitHub Pages deployment target.
+Configure Tailwind and shadcn/ui. Set up the GitHub Pages deployment target. In `vite.config.js` (or `.ts`), make the build base explicit so the workflow can select `/` for a user/organization Pages repository and `/<repo>/` for a project Pages repository:
+
+```js
+import { defineConfig } from "vite"
+import react from "@vitejs/plugin-react"
+
+export default defineConfig({
+  base: process.env.VITE_BASE_PATH || "/",
+  plugins: [react()],
+})
+```
+
+Use `import.meta.env.BASE_URL` for public asset URLs. For a client-routed SPA, prefer `HashRouter`; if the approved plan requires `BrowserRouter`, set its `basename` from `import.meta.env.BASE_URL` and provide a tested Pages 404 fallback. Do not leave root-relative asset or route URLs that bypass the configured base.
 
 ## Step 3: Execute Tasks Phase by Phase
 
@@ -168,20 +180,67 @@ Verify:
 
 ## Step 6: Deploy to GitHub Pages
 
-Create or update a GitHub repository for the site:
+Create `.github/workflows/deploy-pages.yml`. Pages must deploy the verified Vite `dist/` artifact through GitHub Actions—not the repository root or a branch folder:
 
-```bash
-git init
-git remote add origin git@github.com:<user>/<repo>.git
-git add .
-git commit -m "chore: initial site build"
-git push -u origin main
+```yaml
+name: Deploy Vite site to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/configure-pages@v5
+      - run: npm ci
+      - name: Configure Vite base path
+        shell: bash
+        run: |
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          if [[ "$repo_name" == *.github.io ]]; then
+            echo "VITE_BASE_PATH=/" >> "$GITHUB_ENV"
+          else
+            echo "VITE_BASE_PATH=/$repo_name/" >> "$GITHUB_ENV"
+          fi
+      - run: npm run build
+      - name: Verify static artifact
+        run: test -f dist/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
 ```
 
-Configure GitHub Pages:
-- Repository Settings → Pages → Source: `main` branch, `/ (root)`
+Create or update the GitHub repository for the site, run the repository's required secret scan, then commit and push the project including `package-lock.json`, `vite.config.*`, and the workflow. In Repository Settings → Pages, select **GitHub Actions** as the source; never select `main / (root)` or `/docs` for this Vite build.
 
-Report the GitHub Pages URL.
+Verify the completed workflow uploaded `dist/`, the deploy job succeeded, and its `page_url` responds. Confirm project Pages uses `https://<user>.github.io/<repo>/`, while `<user>.github.io` repositories use the root URL. Report the deployed URL from the workflow output.
 
 ## Step 7: Re-audit the Deployed Site
 
@@ -262,9 +321,11 @@ without changing their field names or units:
 
 Verify the expected output before deployment is marked complete:
 
-- `npm run build` exits 0 and the configured static output directory exists.
+- `npm run build` exits 0 and `dist/index.html` exists.
+- `.github/workflows/deploy-pages.yml` runs `npm ci` and `npm run build`, uploads exactly `dist/` as a Pages artifact, and deploys it with the required Pages permissions and environment.
+- The workflow-derived `VITE_BASE_PATH` is `/` for user/organization Pages and `/<repo>/` for project Pages; Vite, internal routes, and asset URLs use that base consistently.
 - Every approved task is represented in `tasks_completed` or named in `deviations`; assert `tasks_completed <= tasks_total`.
-- Internal routes and collected asset paths resolve under the GitHub Pages base path.
+- Internal routes and collected asset paths resolve under the GitHub Pages base path, including a direct-refresh check for every supported route strategy.
 - `builder-metadata.json` parses and contains the URL, task counts, asset lists, deviations, output size, exact tech stack, after-snapshot status, and structured performance/SEO/security objects.
 - A `PASS` result requires a responsive Pages URL and a complete comparable after snapshot with every required performance field, SEO overall/dimension score, and security check non-null.
 - Deployment, analyzer, or required after-value gaps are recorded and force `PARTIAL`; a metadata write failure is `FAIL`.

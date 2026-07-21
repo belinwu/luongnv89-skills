@@ -4,7 +4,7 @@ description: "Build an improved website clone from a URL via 6-phase gated workf
 license: MIT
 effort: high
 metadata:
-  version: 1.2.0
+  version: 1.2.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -44,7 +44,7 @@ Phase 6 — Final Report   → website-clone-final-report
 
 Approval gates after Phase 2, 3, and 4: the orchestrator **must not advance** without explicit user approval.
 
-**Artifacts** (each written once, then referenced by name in the phases below): `analysis.json` — Phase 1's structured findings; `report.md` — Phase 2's plain-language summary; `prd.md` — Phase 3's improvement proposal; `tasks.md` — Phase 4's phased implementation plan; `builder-metadata.json` — Phase 5's build metadata, Pages URL, and structured post-deployment performance/SEO/security snapshot consumed by Phase 6; `after-analysis.json` — the comparable Phase 5 re-audit source.
+**Artifacts** (each written once, then referenced by name in the phases below): `analysis.json` — Phase 1's structured findings; `report.md` — Phase 2's plain-language summary; `prd.md` — Phase 3's improvement proposal; `tasks.md` — Phase 4's phased implementation plan, including the approved GitHub Actions artifact-deployment task; `builder-metadata.json` — Phase 5's build metadata, workflow-produced Pages URL, and structured post-deployment performance/SEO/security snapshot consumed by Phase 6; `after-analysis.json` — the comparable Phase 5 re-audit source. Phase 5 also produces base-aware Vite configuration and `.github/workflows/deploy-pages.yml`, which builds and deploys `dist/` rather than publishing the repository root.
 
 ## Layout
 
@@ -179,7 +179,7 @@ Invoke `website-implementation-plan` with `prd.md`:
 /website-implementation-plan "$PROJECT_DIR/prd.md" --output "$PROJECT_DIR/tasks.md"
 ```
 
-This skill produces a phased implementation plan with landing page first, asset collection vs. creation, and individual tasks — written to `tasks.md` after user approval.
+This skill produces a phased implementation plan with landing page first, asset collection vs. creation, individual tasks, and a deterministic GitHub Actions Pages artifact deployment from base-aware Vite `dist/` output — written to `tasks.md` after user approval.
 
 **Check:** `tasks.md` exists and was approved.
 
@@ -192,6 +192,7 @@ This skill produces a phased implementation plan with landing page first, asset 
   User approved:        √ pass | × pending
   Phases defined:       √ pass (≥ 2 phases)
   Landing page first:   √ pass
+  Pages artifact task:  √ pass (base-aware dist/)
   ____________________________
   Result:               PASS | BLOCKED
 ```
@@ -204,7 +205,7 @@ Invoke `website-builder` with `tasks.md` and `prd.md`:
 /website-builder "$PROJECT_DIR/tasks.md" "$PROJECT_DIR/prd.md" --output "$PROJECT_DIR/"
 ```
 
-This skill executes the plan, builds the site (Vite + React + shadcn/ui + Tailwind), deploys static assets, then re-runs `website-analyzer` against the responsive Pages URL. It emits the structured after snapshot in metadata for Phase 6. If deployment or the re-audit is incomplete, Phase 5 must return `PARTIAL` and preserve nulls/errors rather than inventing metrics.
+This skill executes the plan, builds the site (Vite + React + shadcn/ui + Tailwind), and deploys the verified `dist/` artifact through `.github/workflows/deploy-pages.yml`. The workflow sets the Vite base to `/` for a user/organization Pages repository or `/<repo>/` for project Pages; repository-root and branch-folder publishing are forbidden. It then re-runs `website-analyzer` against the responsive workflow-produced Pages URL and emits the structured after snapshot in metadata for Phase 6. If deployment or the re-audit is incomplete, Phase 5 must return `PARTIAL` and preserve nulls/errors rather than inventing metrics.
 
 **Step Completion Report:**
 
@@ -214,6 +215,7 @@ This skill executes the plan, builds the site (Vite + React + shadcn/ui + Tailwi
   Landing page built:   √ pass
   Assets collected:     √ pass (<N> assets)
   Assets created:       √ pass (<N> assets)
+  Pages dist artifact:  √ pass | × unavailable
   GitHub Pages URL:     √ pass (<url>) | × unavailable
   After metrics:        √ complete | × partial ([performance/SEO/security gaps])
   ____________________________

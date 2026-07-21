@@ -4,7 +4,7 @@ description: "Review UI usability using Steve Krug's principles and produce a sc
 license: MIT
 effort: medium
 metadata:
-  version: 1.3.1
+  version: 1.3.2
   author: Luong NGUYEN <luongnv89@gmail.com>
 ---
 

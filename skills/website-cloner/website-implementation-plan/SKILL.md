@@ -4,7 +4,7 @@ description: "Generate phased tasks.md from an approved website PRD, with landin
 license: MIT
 effort: high
 metadata:
-  version: 1.3.1
+  version: 1.3.2
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -55,14 +55,17 @@ The landing/home page is built first so it can be shown to potential users early
 
 ### Task 1.1: Project Setup
 
-**Scope:** Initialize Vite + React + shadcn/ui + Tailwind CSS project. Configure build, routing, and deployment to GitHub Pages.
+**Scope:** Initialize Vite + React + shadcn/ui + Tailwind CSS project. Configure build, base-aware routing/assets, and deterministic GitHub Actions Pages artifact deployment.
 
-**Outputs:** Working project scaffold with build pipeline.
+**Outputs:** Working project scaffold, base-aware Vite configuration, and `.github/workflows/deploy-pages.yml`.
 
 **Acceptance Criteria:**
 - `npm run dev` starts a local dev server
-- `npm run build` produces static assets in dist/
-- GitHub Pages deployment configured
+- `npm run build` produces `dist/index.html`
+- `vite.config.*` consumes `VITE_BASE_PATH`; the workflow sets `/` for user/organization Pages and `/<repo>/` for project Pages
+- Internal routes and public assets resolve under the configured base; the selected SPA route strategy has a direct-refresh check
+- The Pages workflow runs `npm ci` and `npm run build`, uploads exactly `dist/` with `actions/upload-pages-artifact`, and deploys it with `actions/deploy-pages`
+- Pages source is GitHub Actions, never repository-root, `/docs`, or branch-folder publishing
 
 **Assets Needed:**
 - [Collect] Logo, brand colors, brand name from original site
@@ -143,9 +146,10 @@ Performance, SEO, and security improvements from the PRD.
 
 ## Deployment
 
-1. Push to GitHub repository
-2. Configure GitHub Pages (settings → Pages → source: main /docs or /)
-3. Verify deployment at `https://<user>.github.io/<repo>/`
+1. Include `package-lock.json`, base-aware `vite.config.*`, and `.github/workflows/deploy-pages.yml` in the implementation tasks.
+2. Push the approved project to the default branch and configure Repository Settings → Pages → Source as **GitHub Actions**.
+3. Require the workflow to build and verify `dist/index.html`, upload exactly `dist/` as the Pages artifact, and deploy that artifact.
+4. Verify project Pages at `https://<user>.github.io/<repo>/`; for a `<user>.github.io` repository, verify the root URL instead.
 
 ---
 
@@ -245,6 +249,7 @@ Verify the complete plan before requesting approval:
 - Every in-scope PRD requirement maps to at least one numbered task or an explicitly justified exclusion.
 - Phase 1 produces an independently usable landing page; later phases preserve dependency order.
 - Every task has bounded scope, concrete outputs, measurable acceptance criteria, and all required assets classified as `[Collect]` or `[Create]`.
+- Project setup includes the artifact-based Pages workflow, deterministic Vite base-path behavior, and route/asset checks; no plan publishes Vite output from repository root or `/docs`.
 - Asset Summary contains every asset named by a task exactly once with a source and action.
 - The expected result is valid markdown at the approved path plus exactly one final `STATUS: approved`; pending or aborted outcomes write no file.
 
