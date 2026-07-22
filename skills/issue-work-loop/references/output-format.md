@@ -1,116 +1,199 @@
 # Output Format — /issue-work-loop
 
-Terminal style follows shared conventions: symbols `● ✓ ✗ ◆ ⚡ ⚠ ○`, two-space indent, `┄` separators, URLs on their own line, ≤80 chars where practical.
+Terminal style: `● ✓ ✗ ◆ ⚡ ⚠ ○`, two-space indent, separators, URLs on their own line, and approximately 80 columns where practical. Every report names `mode: ISSUE | PR`.
 
-## Preflight report
+## Preflight — ISSUE
 
-```
-◆ Preflight (issue #{N})
+```text
+◆ Preflight (ISSUE #{N})
 ··································································
-  Git / gh:           √ pass
-  Herdr server:       √ pass
-  Skills:             √ pass (issue-resolver, issue-pr-review, herdr-agent-comms)
-  Issue open:         √ pass — {title}
+  Git / gh / Herdr:  √ pass
+  Skills:             √ issue-resolver, issue-pr-review, herdr-agent-comms
+  Issue open:         √ #{N} — {title}
+  Linked open PRs:    √ 0 | ⚠ 1 → awaiting switch | × {count}
   Criteria:           √ 4/4 met
-  Result:             PASS
+  Result:             PASS | FAIL
 ```
 
-## Plan banner (before spawn)
+Exactly one linked open PR prints the confirmation from `error-messages.md`; accepting restarts the report as PR mode, declining reports ABORTED.
 
+## Preflight — PR
+
+```text
+◆ Preflight (PR #{M})
+··································································
+  Git / gh / Herdr:  √ pass
+  Skills:             √ issue-pr-review, herdr-agent-comms
+  PR open:            √ #{M} — {title}
+  Head:               √ {head_ref} @ {sha_short}
+  Source / fork:      √ {owner_repo} | ⚠ unknown; review allowed
+  Issue context:      {none | #N | #N,#K}
+  Explicit link:      √ matched | ○ not supplied | × mismatch
+  Criteria:           √ 6/6 met
+  Result:             PASS | FAIL
 ```
+
+## Plan banners
+
+```text
 ◆ Issue Work Loop Plan
-┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+  Mode:          ISSUE
   Issue:         #{N} — {title}
   Max rounds:    {K}
-  Agent CLI:     {agent_cli}
   Implementer:   {impl_name}
   Reviewer:      {rev_name}
-  Merge:         USER (never auto)
-
-  ⟶ Starting...
+  Merge:         USER only
 ```
 
-## Per-ROUND report
-
+```text
+◆ PR Work Loop Plan
+  Mode:          PR
+  PR:            #{M} — {title}
+  {pr_url}
+  Head:          {head_ref} @ {sha_short}
+  Issue context: {none | #N | #N,#K}
+  Max rounds:    {K}
+  Reviewer:      {rev_name} (spawn first)
+  FIXER:         lazy {fix_name} (FINDINGS + safe push only)
+  Merge:         USER only
 ```
-◆ ROUND {r}/{K}
+
+## Per-ROUND — ISSUE
+
+```text
+◆ ROUND {r}/{K} (ISSUE)
 ··································································
-  Context impl:       √ reuse ({p}%) | ⚡ freshen | ○ n/a
-  Context rev:        √ reuse ({p}%) | ⚡ freshen
+  Current head:       √ {sha_short}
+  Context reviewer:   √ reuse ({p}%) | ⚡ freshen
   Review:             √ CLEAN | ✗ FINDINGS ({count})
-  Fix:                √ pushed {sha_short} | ○ skipped | × fail
-  Criteria:           √ … 
+  Context implementer:√ reuse ({p}%) | ⚡ freshen | ○ CLEAN exit
+  Fix:                √ pushed {new_sha_short} | ○ skipped | × fail
+  Same PR / branch:   √ #{M} / {head_ref}
+  Criteria:           √ {n}/{total} met
   Result:             PASS | CONTINUE | FAIL
 ```
 
-## SWEEP report
+## Per-ROUND — PR
 
-```
-◆ SWEEP (cleanup)
+```text
+◆ ROUND {r}/{K} (PR)
 ··································································
-  Worker panes:       √ closed impl-{N}, rev-{N}
-  Worktrees removed:  √ {path} | ○ none
+  Current head:       √ {sha_short}
+  Reviewer SHA:       √ matched | × stale
+  Review:             √ CLEAN | ✗ FINDINGS ({count})
+  Push safety:        √ pass | ○ not needed | × unavailable/unknown
+  FIXER pane:         √ {fix_name} | ○ not spawned | × prohibited
+  Isolated worktree:  √ {path} | ○ not needed | × missing
+  Fix / new head:     √ {new_sha_short} | ○ CLEAN exit | × stopped
+  Same PR / branch:   √ #{M} / {head_ref}
+  Criteria:           √ {n}/{total} met
+  Result:             PASS | CONTINUE | FAIL
+```
+
+A CLEAN-first PR report must show `FIXER pane: ○ not spawned` and `Isolated worktree: ○ not needed`.
+
+## Push-safety handoff — review completed, fixing blocked
+
+```text
+◆ PR Work Loop Stopped (push safety)
+  Mode:          PR
+  PR:            #{M}
+  {pr_url}
+  Head:          {head_ref} @ {sha}
+  Issue context: {none | #N | #N,#K}
+  Review:        FINDINGS ({count})
+  FIXER:         not spawned
+  Push:          not attempted — {reason}
+
+  Remaining FINDINGS:
+  1. ...
+
+  Next:          PR owner/collaborator applies fixes on the existing branch,
+                 then re-run /issue-work-loop --pr {M}
+```
+
+## SWEEP — mode aware
+
+```text
+◆ SWEEP (cleanup, {ISSUE|PR})
+··································································
+  Worker panes:       √ closed {spawned_names} | ○ none | ⚠ partial
+  Worktrees removed:  √ {paths} | ○ none | ⚠ partial
+  Issue-resolver wt:  √ removed | ○ not applicable (PR mode)
   On default branch:  √ {default_branch}
   Working tree:       √ clean
-  Criteria:           √ 4/4 met
+  Criteria:           √ 5/5 met
   Result:             PASS | PARTIAL | FAIL
 ```
 
-## Final summary — CLEAN
+`spawned_names` is ISSUE implementer+reviewer, or PR reviewer plus optional FIXER. Never claim a FIXER was closed when one was not spawned.
 
-```
-◆ Issue Work Loop Complete
-┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-  Issue:         #{N} — {title}
+## Final — CLEAN
+
+```text
+◆ Work Loop Complete
+  Mode:          {ISSUE|PR}
+  Issue context: {#N | none | #N,#K}
   PR:            #{M}
   {pr_url}
-  Branch:        {branch} (remote only — local workspace cleaned)
+  Branch:        {head_ref} (remote open; local loop worktree removed)
   Head:          {sha}
   Rounds:        {r}/{K}
-  Freshen:       impl={ni}, rev={nr}
-  Cleanup:       √ panes closed, worktrees removed, on {default_branch}
+  Spawned roles: {IMPLEMENTER, REVIEWER | REVIEWER | REVIEWER, FIXER}
+  Freshen:       {role=count, ...}
+  Cleanup:       √ | ⚠ partial | ○ skipped
   Verdict:       CLEAN
 
-  Next:          open the PR and merge when ready (human only)
+  Next:          inspect and merge manually if ready
                  {pr_url}
 ```
 
-## Final summary — MAX_ROUNDS
+## Final — MAX_ROUNDS
 
-```
-◆ Issue Work Loop Stopped
-┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-  Issue:         #{N}
+```text
+◆ Work Loop Stopped
+  Mode:          {ISSUE|PR}
+  Issue context: {#N | none | #N,#K}
   PR:            #{M}
   {pr_url}
+  Head:          {head_ref} @ {sha}
   Rounds:        {K}/{K}
-  Cleanup:       √ workspace cleaned (PR left open)
+  Spawned roles: {roles}
+  Cleanup:       √ | ⚠ partial | ○ skipped
   Verdict:       MAX_ROUNDS
 
   Remaining FINDINGS:
   1. ...
-  2. ...
 
-  Next:          fix on GitHub / re-run /issue-work-loop {N},
-                 or merge with known gaps (human decision)
+  Next:          continue fixes on this PR or re-run the same mode;
+                 merge remains a human decision
 ```
 
-## Final summary — FAILED / ALREADY_RESOLVED
+## Final — FAILED / ALREADY_RESOLVED / ABORTED
 
-```
-◆ Issue Work Loop Ended
-┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-  Issue:         #{N}
-  Verdict:       FAILED | ALREADY_RESOLVED
+```text
+◆ Work Loop Ended
+  Mode:          {ISSUE|PR}
+  Issue context: {none | #N | #N,#K}
+  Verdict:       FAILED | ALREADY_RESOLVED | ABORTED
   Phase:         {phase}
   Reason:        {short}
   PR:            {url or none}
+  Head:          {sha or unknown}
+  Spawned roles: {roles or none}
   Cleanup:       √ | ⚠ partial | ○ skipped
 ```
 
-## Compact success line (after full report)
+## Demanding completion report
 
+Each phase/ROUND uses:
+
+```text
+◆ {Step} ({mode})
+··································································
+  {GitHub/pane/SHA/worktree check}: √ pass | × fail — {evidence}
+  Criteria:                         √ N/M met
+  Result:                           PASS | CONTINUE | FAIL | PARTIAL
 ```
-  ✓ Issue #{N} ready for human merge (workspace clean)
-    https://github.com/owner/repo/pull/{M}
-```
+
+A final CLEAN PASS is invalid unless a fresh GitHub query matches PR number, OPEN state, branch, reviewed SHA, and zero FINDINGS; SWEEP must separately account for every spawned pane and loop-created worktree.

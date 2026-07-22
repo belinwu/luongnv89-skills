@@ -1,80 +1,60 @@
 # Context Gate — /issue-work-loop
 
-Best-effort gate: if a worker is already ≥ **50%** context (configurable via `work_loop.context_threshold`), **FRESHEN** it before assigning work — **reviewer** gated at ROUND start, **implementer** gated immediately before each fix dispatch (not at ROUND start).
+Best-effort gate: FRESHEN a reusable worker at or above `work_loop.context_threshold` (default 50%). Herdr does not expose normalized usage for every CLI, so use the worker probe and conservative UNKNOWN fallback.
 
-This is not a perfect token meter. Herdr does not expose a normalized context percentage for every CLI. Prefer an explicit agent report; fall back to conservative heuristics when the report is `UNKNOWN`.
+## Gate points
 
-## When to run
+| Mode / role | When |
+|---|---|
+| Both — reviewer | Start of every review ROUND, including ROUND 1 |
+| ISSUE — implementer | Immediately before every fix; skip fresh initial resolve |
+| PR — FIXER | Immediately before every fix after it exists; its first lazy spawn is already fresh |
 
-| Role | When |
-|------|------|
-| Implementer | Before every fix dispatch (Phase 5c), first fix included. Skip on the initial resolve if the pane just booted. |
-| Reviewer | Start of every review ROUND (including ROUND 1 after spawn — usually pass; still probe if the pane is reused). |
+Never gate or spawn a writer before a CLEAN exit. In PR mode, never gate/spawn FIXER before FINDINGS plus push-safety PASS.
 
-Never skip the gate after a long prior ROUND on the same pane.
+## Probe and decision
 
-## Probe
+Send the Context probe from `agent-prompts.md`. Parse `CONTEXT: P%` or `CONTEXT: UNKNOWN`; minor case/spacing variants are acceptable.
 
-Send the **Context probe** from `references/agent-prompts.md` via herdr Phase 4→5 (short timeout is fine — e.g. 60s). Parse the first matching line:
+| Result | Action |
+|---|---|
+| Integer `P >= threshold` | FRESHEN |
+| Integer `P < threshold` | Reuse |
+| UNKNOWN, unparseable, or timeout | Apply role fallback below |
 
-```
-CONTEXT: 42%
-CONTEXT: UNKNOWN
-```
-
-Accept minor variants: `Context: 42%`, `CONTEXT 42%`, `context usage: 42%` → normalize to integer percent.
-
-## Decision table
-
-| Report | Action |
-|--------|--------|
-| Integer `P` where `P ≥ threshold` (default 50) | **FRESHEN** |
-| Integer `P` where `P < threshold` | Reuse pane |
-| `UNKNOWN` | Apply **UNKNOWN fallback** below |
-| Unparseable / timeout | Treat as `UNKNOWN` |
+Invalid threshold uses 50 and prints one warning. Threshold must be 1–99.
 
 ## FRESHEN procedure
 
-1. Record compact state: `issue_number`, `pr_number`, `pr_url`, `branch_name`, `head_sha`, current FINDINGS (if any), role name.
-2. Confirm teardown of that worker only (orchestrator may auto-close workers it spawned — do not close root). Prefer:
+1. Record compact state: `mode`, `issue_context`, `pr_number`, `pr_url`, `head_ref`, current `head_sha`, FINDINGS, role, isolated FIXER worktree path if any.
+2. Close only that worker pane; never close the root orchestrator pane.
+3. Re-spawn the same configured role name; if occupied, append an epoch and update tracked pane state.
+4. Wait for readiness.
+5. Send the matching compact handoff from `agent-prompts.md`.
+6. Re-verify current PR head before review/fix.
 
-   ```bash
-   herdr pane close "$worker_pane"
-   ```
-
-3. Re-spawn the same role name (if name still taken, append `-<epoch>` and update the handle) using `herdr-agent-comms` Phase 2.
-4. Wait for readiness (`--ready`).
-5. Send the **compact handoff** prompt for that role from `references/agent-prompts.md`.
-6. Proceed with the ROUND task (review or fix).
-
-Do **not** paste full prior transcripts, full diffs, or entire issue bodies into the handoff — only identifiers + FINDINGS list.
+Do not paste transcripts, full diffs, or issue/PR bodies. FRESHEN never authorizes a new PR, merge, force-push, primary-checkout mutation, or `/issue-resolver` during a fix.
 
 ## UNKNOWN fallback
 
-When the agent cannot report context %:
-
 | Role | Fallback |
-|------|----------|
-| **Reviewer** | FRESHEN every ROUND after ROUND 1 (independent eyes preferred). ROUND 1 after a fresh spawn: reuse. |
-| **Implementer** | If the last task was a full resolve (Phase 3), **FRESHEN before the first fix**. Otherwise reuse the first fix ROUND, then FRESHEN before `round >= 3`. Also FRESHEN when the last implementer reply was truncated or the agent reports confusion about prior state. |
+|---|---|
+| Reviewer | Fresh spawn on ROUND 1 may be reused; FRESHEN before every later ROUND |
+| ISSUE implementer | After initial full resolve, FRESHEN before first fix; otherwise reuse first short fix, then FRESHEN before ROUND 3+ |
+| PR FIXER | Initial lazy spawn is fresh; reuse first fix; FRESHEN before each later fix when usage remains UNKNOWN |
 
-**Cap thrash:** at most **2 consecutive UNKNOWN-driven FRESHENs** per role per loop. After the cap, reuse the pane, print `⚠ Context UNKNOWN — freshen cap reached; reusing {role}`, and proceed.
+Also FRESHEN after truncated/confused output. Cap UNKNOWN-driven churn at two consecutive FRESHENs per role; after that, reuse and print:
 
-Log every fallback choice:
-
+```text
+⚠ Context UNKNOWN — freshen cap reached; reusing {role}
 ```
+
+Log every UNKNOWN choice:
+
+```text
 ⚠ Context UNKNOWN for {role} — fallback: {reuse|freshen} ({reason})
 ```
 
-## Threshold override
+## Done when
 
-- Config: `work_loop.context_threshold` (integer 1–99, default 50)
-- Do not treat 0 or 100 as special beyond the comparison
-- If config is invalid, use 50 and print a `⚠` once
-
-## What FRESHEN is not
-
-- Not `/compact` inside the same session (optional extra if the CLI supports it, but the skill's required path is pane restart)
-- Not a reason to re-run full `/issue-resolver`
-- Not a reason to open a new PR
-- Not applied to the root orchestrator pane
+Before work dispatch, the report records a parsed percentage or explicit UNKNOWN fallback; any FRESHEN has a new ready pane id and compact state; current GitHub head still matches the task SHA.

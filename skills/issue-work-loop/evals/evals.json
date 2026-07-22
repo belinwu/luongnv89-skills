@@ -4,119 +4,250 @@
     {
       "id": 1,
       "kind": "happy-path",
-      "prompt": "Work on issue #42 end to end with an implementer and reviewer until the PR is clean. I'll merge myself.",
-      "expected_output": "Runs /issue-work-loop style flow: Herdr implementer with issue-resolver, then reviewer with issue-pr-review --review-only, loops until CLEAN, does not merge.",
+      "prompt": "/issue-work-loop 17",
+      "expected_output": "Runs the unchanged bare-number ISSUE flow: preflight, issue-resolver implementer, independent reviewer, fix rounds, SWEEP, and USER-MERGE.",
       "files": [],
       "expectations": [
-        "Spawns Herdr panes for implementer and reviewer (herdr-agent-comms), not Agent-tool subagents for those roles",
-        "Implementer is instructed to use issue-resolver on issue #42",
-        "Reviewer is instructed to use issue-pr-review --review-only",
-        "Final handoff leaves merge to the user (no gh pr merge)",
-        "Runs SWEEP cleanup: closes worker panes and removes loop worktrees before handoff"
+        "Interprets bare number 17 as issue #17, never PR #17",
+        "Requires issue #17 to be open and checks for linked open PRs before spawn",
+        "Spawns ISSUE implementer first and instructs it to use /issue-resolver 17 --auto",
+        "Uses issue-pr-review --review-only for independent review",
+        "Does not merge and runs mode-aware SWEEP"
       ]
     },
     {
       "id": 2,
       "kind": "happy-path",
-      "prompt": "/issue-work-loop 17",
-      "expected_output": "Preflight then resolve/review loop for issue 17 with default max rounds 5.",
+      "prompt": "Work issue #42 end to end with an implementer and reviewer until clean, max 3 rounds. I will merge.",
+      "expected_output": "Runs ISSUE mode with max_rounds=3, notes-as-FINDINGS, same-PR fix rounds, and human merge handoff.",
       "files": [],
       "expectations": [
-        "Parses issue number 17",
-        "Uses default max_rounds of 5 unless overridden",
-        "Emits structured phase/round reports"
+        "Uses an implementer role in ISSUE mode",
+        "Caps completed review rounds at 3",
+        "Fix prompts forbid re-running issue-resolver, opening a second PR, force-pushing, or merging",
+        "Reports remaining findings if the cap is reached"
       ]
     },
     {
       "id": 3,
       "kind": "happy-path",
-      "prompt": "Run the issue work loop on #99 with max 3 rounds using claude workers in Herdr.",
-      "expected_output": "Loop with max_rounds=3; notes treated as findings; fix rounds do not re-run full issue-resolver.",
+      "prompt": "/issue-work-loop --pr 88",
+      "expected_output": "Selects PR mode for existing PR #88, validates it is OPEN, and spawns reviewer first.",
       "files": [],
       "expectations": [
-        "Respects max rounds of 3",
-        "Treats note-level review items as FINDINGS requiring a fix round",
-        "Fix prompts forbid opening a second PR and forbid re-running full issue-resolver"
+        "Parses --pr 88 as PR mode",
+        "Queries PR identity, title/body, head branch/SHA, repository owner, cross-repo, maintainer-modification, and closing issue facts with graceful fallback",
+        "Requires PR state OPEN",
+        "Spawns reviewer first and never calls issue-resolver in PR mode",
+        "Does not spawn a FIXER before a FINDINGS verdict"
       ]
     },
     {
       "id": 4,
-      "kind": "edge",
-      "prompt": "/issue-work-loop 55 — if context is over half full at the start of a new round, restart that agent fresh.",
-      "expected_output": "Applies context gate: probe CONTEXT %, FRESHEN at >=50%, UNKNOWN fallback documented.",
+      "kind": "happy-path",
+      "prompt": "/issue-work-loop pr 91 --max-rounds 4",
+      "expected_output": "Treats `pr 91` as existing-PR mode with four review rounds maximum.",
       "files": [],
       "expectations": [
-        "Probes context usage before assigning a new round of work",
-        "Restarts (FRESHEN) a worker when context is reported at or above 50%",
-        "Uses a compact handoff (issue/PR/sha/findings) after freshen, not full transcript paste"
+        "Parses `pr 91` as PR mode rather than issue mode",
+        "Uses max_rounds 4",
+        "Spawns the reviewer before any writer",
+        "Leaves merge to the user"
       ]
     },
     {
       "id": 5,
-      "kind": "edge",
-      "prompt": "Keep reviewing and fixing issue #12 until clean, but stop after max rounds with findings still open.",
-      "expected_output": "On max rounds, report remaining FINDINGS, leave PR open, do not merge.",
+      "kind": "happy-path",
+      "prompt": "Review and fix existing PR #120 until it is clean. Keep using that PR and I'll merge it.",
+      "expected_output": "Natural-language existing-PR review+fix request routes to PR mode and preserves the same PR.",
       "files": [],
       "expectations": [
-        "Stops when max rounds exhausted with remaining findings",
-        "Lists remaining FINDINGS in the final summary",
-        "Does not call gh pr merge"
+        "Triggers PR mode from natural language",
+        "Reviews current head SHA before any fixer exists",
+        "Uses explicit FIXER role only if findings exist and push safety passes",
+        "Never opens a second PR or merges"
       ]
     },
     {
       "id": 6,
-      "kind": "negative-trigger",
-      "prompt": "Review PR #88 and auto-merge if green.",
-      "expected_output": "Should use issue-pr-review / merge flow, not issue-work-loop.",
+      "kind": "edge",
+      "prompt": "/issue-work-loop --pr 33, and PR #33 has no linked issue.",
+      "expected_output": "Continues PR mode with no linked issue and reports issue_context: none.",
       "files": [],
       "expectations": [
-        "Does not invoke the issue-work-loop implementer/reviewer Herdr pair as the primary path",
-        "Does not claim ownership of merge via issue-work-loop USER-MERGE contract"
+        "Treats linked issue as optional",
+        "Reports exactly issue_context: none",
+        "Does not invent an issue from branch names, commits, or arbitrary #number mentions",
+        "Reviewer and potential FIXER prompts support issue_context: none"
       ]
     },
     {
       "id": 7,
       "kind": "edge",
-      "prompt": "/issue-work-loop 42 but issue 42 already has two open PRs mentioning it.",
-      "expected_output": "Stops at preflight with ambiguous PR error; does not spawn implementer resolve.",
+      "prompt": "Run /issue-work-loop --pr 64. The first review returns two FINDINGS and branch push access is proven safe.",
+      "expected_output": "Lazily spawns FIXER only after FINDINGS and push-safety PASS, fixes in isolation, pushes the same branch, verifies new SHA, and re-reviews.",
       "files": [],
       "expectations": [
-        "Detects multiple linked open PRs before spawn",
-        "Does not start /issue-resolver when PR graph is ambiguous"
+        "No implementer or FIXER is spawned before first review",
+        "Runs the push-safety gate after FINDINGS and before FIXER spawn",
+        "Spawns a pane named fix-64 by default with leading role word FIXER",
+        "Requires a dedicated non-primary worktree",
+        "Uses an ordinary non-force push to PR #64 source branch",
+        "Verifies PR #64 and the same head branch have a new SHA before re-review"
       ]
     },
     {
       "id": 8,
       "kind": "edge",
-      "prompt": "Reviewer says VERDICT CLEAN but lists three note-level findings for issue #7.",
-      "expected_output": "Orchestrator treats as FINDINGS and continues fix loop.",
+      "prompt": "Run /issue-work-loop --pr 65. The first review is CLEAN with no notes.",
+      "expected_output": "Stops the loop CLEAN without spawning FIXER, then SWEEPs the reviewer pane and hands off USER-MERGE.",
       "files": [],
       "expectations": [
-        "Overrides CLEAN when note/fix list items are present",
-        "Does not soft-pass notes"
+        "Reviewer is the first and only worker",
+        "Requires reviewed_head_sha to match the current PR head",
+        "Does not spawn a FIXER or create a fixer worktree",
+        "SWEEP reports no PR fixer worktree and no issue-resolver worktree",
+        "Does not merge"
       ]
     },
     {
       "id": 9,
-      "kind": "negative-trigger",
-      "prompt": "Just resolve issue #9 and open a PR, no review needed.",
-      "expected_output": "Should use issue-resolver, not issue-work-loop.",
+      "kind": "edge",
+      "prompt": "/issue-work-loop 42, where exactly one open PR #77 already links issue #42.",
+      "expected_output": "Asks whether to switch to PR mode; yes switches to reviewer-first PR mode, while no aborts. It never creates a second PR.",
       "files": [],
       "expectations": [
-        "Does not start the Herdr implementer/reviewer pair when independent review is not requested"
+        "Detects the single linked open PR before spawning implementer",
+        "Requires explicit confirmation",
+        "On acceptance validates PR #77 and spawns reviewer first without issue-resolver",
+        "On decline aborts without spawning workers",
+        "Never creates another PR"
       ]
     },
     {
       "id": 10,
-      "kind": "happy-path",
-      "prompt": "After the issue work loop finishes on #42, leave my workspace clean so I only need to merge the PR.",
-      "expected_output": "SWEEP closes panes, removes worktrees, checks out default branch with clean tree; does not merge.",
+      "kind": "edge",
+      "prompt": "/issue-work-loop --pr 72, but PR #72 is CLOSED.",
+      "expected_output": "Stops preflight with the PR-not-open error and no worker spawn.",
       "files": [],
       "expectations": [
-        "Closes implementer and reviewer Herdr panes without closing the root pane",
-        "Removes non-primary git worktrees for the PR branch when present",
-        "Returns the main repo to the default branch with a clean working tree",
-        "Does not delete the remote PR branch or run gh pr merge"
+        "Requires state exactly OPEN",
+        "Reports observed CLOSED state",
+        "Does not spawn reviewer, FIXER, or implementer",
+        "Does not reopen or replace the PR"
+      ]
+    },
+    {
+      "id": 11,
+      "kind": "edge",
+      "prompt": "Review and fix fork PR #73, but maintainerCanModify is false or actual source-branch push permission cannot be proven.",
+      "expected_output": "Allows review, then stops before fixing with push-unavailable/uncertain handoff if FINDINGS exist.",
+      "files": [],
+      "expectations": [
+        "Permits reviewer-first review of the fork PR",
+        "Treats false or unknown push facts as unsafe",
+        "Does not spawn FIXER, edit, or attempt a mutating push",
+        "Reports current SHA, findings, reason, and owner/collaborator handoff"
+      ]
+    },
+    {
+      "id": 12,
+      "kind": "edge",
+      "prompt": "/issue-work-loop 19 --pr 81, but PR #81 does not link issue #19.",
+      "expected_output": "Stops with issue/PR mismatch and asks the user to correct the identifiers.",
+      "files": [],
+      "expectations": [
+        "Checks closing-reference/closing-keyword evidence",
+        "Does not silently choose issue or PR mode",
+        "Does not spawn any worker",
+        "Reports the PR's actual issue_context without inventing a match"
+      ]
+    },
+    {
+      "id": 13,
+      "kind": "edge",
+      "prompt": "Review PR #90 in the work loop; it closes #4 and #9, and the reviewer says CLEAN but lists a note.",
+      "expected_output": "Preserves both links as issue_context: #4,#9 and normalizes CLEAN-with-note to FINDINGS.",
+      "files": [],
+      "expectations": [
+        "Retains all linked issue numbers and does not select a canonical issue",
+        "Reports issue_context: #4,#9",
+        "Treats the note as FINDINGS",
+        "Runs push-safety before any PR FIXER spawn"
+      ]
+    },
+    {
+      "id": 14,
+      "kind": "edge",
+      "prompt": "/issue-work-loop --pr 92, and the PR head changes while the reviewer is working.",
+      "expected_output": "Rejects stale review output, refreshes head SHA, and re-reviews the current SHA without fixing stale findings.",
+      "files": [],
+      "expectations": [
+        "Refreshes headRefOid every round",
+        "Requires reviewed_head_sha to match",
+        "Discards stale review/fix state",
+        "Does not spawn or dispatch FIXER from stale findings"
+      ]
+    },
+    {
+      "id": 15,
+      "kind": "edge",
+      "prompt": "/issue-work-loop 55, but issue #55 has two linked open PRs.",
+      "expected_output": "Stops ISSUE preflight with ambiguous linked PRs and no implementer spawn.",
+      "files": [],
+      "expectations": [
+        "Lists evidence-backed candidate PRs",
+        "Does not pick silently",
+        "Does not invoke issue-resolver"
+      ]
+    },
+    {
+      "id": 16,
+      "kind": "negative-trigger",
+      "prompt": "Review PR #88 and give me findings only; do not fix anything.",
+      "expected_output": "Uses review-only issue-pr-review behavior, not issue-work-loop.",
+      "files": [],
+      "expectations": [
+        "Does not invoke issue-work-loop as the primary workflow",
+        "Does not spawn a FIXER or implementer",
+        "Routes to /issue-pr-review 88 --review-only when appropriate"
+      ]
+    },
+    {
+      "id": 17,
+      "kind": "negative-trigger",
+      "prompt": "Merge PR #88 now, or enable auto-merge when CI passes.",
+      "expected_output": "Does not use issue-work-loop for a merge request and never claims merge ownership.",
+      "files": [],
+      "expectations": [
+        "Does not invoke the reviewer/fixer loop as the primary response",
+        "Does not run gh pr merge or enable auto-merge",
+        "States that merging is outside the USER-MERGE contract if the skill is mentioned"
+      ]
+    },
+    {
+      "id": 18,
+      "kind": "negative-trigger",
+      "prompt": "Just resolve issue #9 and open a PR; no independent review is needed.",
+      "expected_output": "Uses issue-resolver rather than issue-work-loop.",
+      "files": [],
+      "expectations": [
+        "Does not start a Herdr implementer/reviewer pair",
+        "Does not apply issue-work-loop when review is explicitly excluded"
+      ]
+    },
+    {
+      "id": 19,
+      "kind": "edge",
+      "prompt": "/issue-work-loop --pr 88 using Claude Code workers; make the reviewer and fixer autonomous without skipping permissions.",
+      "expected_output": "Boots each Claude Code worker interactively, sends and verifies /auto-mode on before role work, and repeats activation after FRESHEN.",
+      "files": [],
+      "expectations": [
+        "Sends /auto-mode on as a separate Herdr message after readiness and before the reviewer task",
+        "Applies the same autonomous-mode gate before a lazily spawned FIXER receives FINDINGS",
+        "Repeats the gate for every FRESHENed Claude Code session",
+        "Never uses --dangerously-skip-permissions or --allow-dangerously-skip-permissions",
+        "Stops before dispatch if autonomous mode cannot be verified"
       ]
     }
   ]

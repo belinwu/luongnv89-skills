@@ -1,163 +1,253 @@
 # Loop Protocol — /issue-work-loop
 
-State machine and parse rules for the implementer/reviewer ROUND loop. SKILL.md holds the phase spine; this file is the detail.
+This file is authoritative for mode-specific state, GitHub evidence, push safety, and parse rules. Load it only after selecting **ISSUE** or **PR** mode.
 
-## State machine
+## Mode state machines
 
+```text
+ISSUE
+PREFLIGHT → SPAWN_IMPL → RESOLVE → SPAWN_REV → LOOP
+LOOP: REVIEWER_GATE → REFRESH_HEAD → REVIEW
+      CLEAN → SWEEP
+      FINDINGS + rounds left → IMPLEMENTER_GATE → FIX → VERIFY_SAME_PR_NEW_SHA → LOOP
+      FINDINGS + no rounds left → SWEEP(MAX_ROUNDS)
+
+PR
+PREFLIGHT → SPAWN_REV → LOOP
+LOOP: REVIEWER_GATE → REFRESH_HEAD → REVIEW
+      CLEAN → SWEEP                         # no FIXER
+      FINDINGS + rounds left → PUSH_SAFETY
+          unsafe/unknown → SWEEP(FAILED_HANDOFF)  # no FIXER, no push
+          safe → LAZY_SPAWN_FIXER → FIXER_GATE → FIX_IN_ISOLATED_WORKTREE
+                 → VERIFY_SAME_PR_NEW_SHA → LOOP
+      FINDINGS + no rounds left → SWEEP(MAX_ROUNDS)
 ```
-PREFLIGHT
-  → SPAWN_IMPL
-  → RESOLVE          (implementer initial; ROUND 0 conceptually)
-  → SPAWN_REV
-  → LOOP:
-       CONTEXT_GATE (reviewer)          ← start of every ROUND, ROUND 1 included
-       REVIEW
-       if CLEAN → SWEEP
-       if FINDINGS and rounds left → CONTEXT_GATE (implementer) → FIX → LOOP
-       if FINDINGS and no rounds left → SWEEP (MAX_ROUNDS)
-  → SWEEP            (panes + worktrees + default branch; default on)
-  → HANDOFF (USER-MERGE)
+
+Terminal outcomes: `CLEAN | MAX_ROUNDS | FAILED | ALREADY_RESOLVED`. ISSUE preserves `ALREADY_RESOLVED`; PR does not invent that outcome for a closed or missing PR.
+
+## Input resolution
+
+- Bare positive number: ISSUE.
+- `--pr M` or `pr M`: PR.
+- Natural language explicitly asking to review **and fix** an existing PR until clean: PR.
+- Review-only/no-fix request: do not trigger this workflow.
+- Both issue `N` and PR `M`: inspect PR links. If `N` is absent, stop with `Issue/PR mismatch`; if present, run PR mode and retain all linked issues.
+
+## ISSUE preflight and linked open PRs
+
+Confirm the issue is OPEN, then find open PRs linked by GitHub closing references or closing keywords in PR title/body. Search candidates broadly, but only retain evidence-backed links.
+
+| Count | Action |
+|---|---|
+| 0 | Continue ISSUE mode and spawn implementer |
+| 1 | Ask exactly once whether to switch to PR mode on that PR. Accept → PR preflight/reviewer-first flow. Decline → abort. Never create a second PR |
+| 2+ | Stop with ambiguous-PR error before spawning any worker |
+
+## PR identity query and fallback
+
+Try the rich query first:
+
+```bash
+gh pr view {M} --json \
+number,url,title,body,state,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,maintainerCanModify,closingIssuesReferences
 ```
 
-The two context gates sit at different points and are **not** interchangeable (see `references/context-gate.md`):
+Require `number`, `url`, `state`, `headRefName`, and a head SHA. State must be exactly `OPEN`.
 
-- **Reviewer** — gated at ROUND start, before every REVIEW, ROUND 1 included.
-- **Implementer** — gated immediately before **each** fix dispatch, after the FINDINGS verdict — not at ROUND start. The first fix is included (the pane still carries the whole Phase 3 resolve). Gating on the fix edge also avoids freshening the implementer right before a CLEAN exit.
+GitHub CLI versions expose different optional fields. If the rich query fails because a field is unavailable:
 
-Terminal outcomes: `CLEAN` | `MAX_ROUNDS` | `FAILED` | `ALREADY_RESOLVED`
-
-SWEEP is mandatory before HANDOFF when `work_loop.auto_cleanup` is true (default). Full steps in `references/cleanup.md`.
-
-## ROUND counter
-
-- `round` starts at **1** for the first review after the PR exists.
-- Initial resolve is **not** counted as a review ROUND (it is Phase 3).
-- Each full REVIEW (+ optional FIX that follows FINDINGS) consumes one ROUND when FINDINGS are returned and a fix is requested; a CLEAN review on ROUND `r` ends with `rounds_used = r`.
-- Default `max_rounds = 5`. CLI `--max-rounds` and config `work_loop.max_rounds` override.
-
-## PR detection (after implementer)
-
-1. Prefer structured fields from the implementer report (`pr_number`, `pr_url`).
-2. Validate with:
+1. Print the optional-field fallback warning.
+2. Retry core identity:
 
    ```bash
-   gh pr view {pr_number} --json number,url,state,title,body,headRefName,commits
+   gh pr view {M} --json number,url,title,body,state,headRefName,headRefOid
    ```
 
-3. If implementer omitted the number, search:
+3. If `headRefOid` is unavailable, retry with `commits` and derive the newest commit OID:
 
    ```bash
-   gh pr list --state open --search "{issue_number}" --json number,title,url,body,headRefName
+   gh pr view {M} --json number,url,title,body,state,headRefName,commits
    ```
 
-   Keep PRs whose title/body match (case-insensitive) any of:
-   - `(closes|fixes|resolves|closed|fixed|resolved)\s+#?{N}\b`
-   - `#\s?{N}\b`
+4. Query supported optional fields individually, or use authenticated `gh api graphql`/REST for equivalent facts. Record unavailable `headRepositoryOwner`, `headRepository`, `isCrossRepository`, or `maintainerCanModify` as `unknown`.
+5. Unknown identity/head is fatal. Unknown push-safety facts are not fatal to review, but they make PR-mode fixing unsafe until independently proven.
 
-   When the implementer reported `branch_name`, **prefer** the PR whose `headRefName` equals that branch among matches.
+Record immutable run keys before worker spawn:
 
-4. **Zero matches** → FAILED (implementer did not open a PR).
-5. **One match** → use it.
-6. **Multiple matches** → stop; list them; do not pick silently.
-
-The same match rules apply to Phase 1's linked-open-PR precheck (before spawn).
-
-Record `branch_name` from `headRefName` and `head_sha` from the latest commit when the implementer did not supply them.
-
-## CLEAN definition (strict)
-
-CLEAN only when **all** hold:
-
-1. Reviewer ends with `VERDICT: CLEAN`
-2. Numbered FINDINGS list is empty / absent
-3. Reviewer did not list remaining note-level items as open work
-
-If the underlying `/issue-pr-review --review-only` report says soft-pass with notes, the orchestrator **overrides** to FINDINGS: extract the notes into the FINDINGS list and send a fix ROUND. Notes count.
-
-Contradiction rules (no re-prompt needed):
-- `VERDICT: CLEAN` + any list items → FINDINGS
-- both `VERDICT: CLEAN` and `VERDICT: FINDINGS` present → FINDINGS
-
-Do not invent CLEAN when the VERDICT line is missing.
-
-## FINDINGS extraction
-
-Prefer the numbered list under `VERDICT: FINDINGS`. Normalize each line to:
-
-```
-{i}. [severity:fix|note] [dimension] description (area)
+```text
+pr_number, pr_url, pr_title, head_ref, head_sha,
+head_repository, head_repository_owner,
+is_cross_repository, maintainer_can_modify
 ```
 
-If severity is missing, default:
+## Linked-issue evidence in PR mode
 
-- words like crash, security, wrong, fail, broken → `fix`
-- otherwise → `note` (still actionable)
+Linked issue is optional. Build a de-duplicated, numerically sorted set from:
 
-If VERDICT is FINDINGS but the list is empty, re-prompt once for the list; still empty → treat as one synthetic FINDING: `Reviewer reported FINDINGS without details — re-review after implementer asks for clarification` and fail the ROUND if a second empty list appears.
+1. GitHub `closingIssuesReferences` (or equivalent API closing-reference data).
+2. Case-insensitive closing-keyword evidence in PR title/body:
 
-## Implementer fix success
+   ```regex
+   \b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#(\d+)\b
+   ```
 
-Require:
+Do not count arbitrary `#N` mentions without closing evidence. Do not infer a canonical issue from branch names, commit text, or prose. Keep all linked numbers:
+
+```text
+issue_context: none
+issue_context: #42
+issue_context: #42,#77
+```
+
+If an issue was explicitly supplied with the PR, it must appear in this set. Additional linked issues remain in context.
+
+## ISSUE PR creation and validation
+
+The initial implementer runs `/issue-resolver N --auto`. Prefer structured `pr_number` and `pr_url`, then validate:
+
+```bash
+gh pr view {M} --json number,url,state,title,body,headRefName,headRefOid,closingIssuesReferences
+```
+
+If the report omits a PR number, search open PRs and apply the same GitHub/closing-keyword link evidence. Prefer a reported branch match only among evidence-backed candidates. Zero matches is FAILED; multiple matches is ambiguous. Record `head_ref` and `head_sha` from GitHub, not only worker output.
+
+### Already resolved (ISSUE only)
+
+If the implementer authoritatively returns `already_resolved`:
+
+| Linked open PR count | Action |
+|---|---|
+| 0 | `ALREADY_RESOLVED`; no reviewer or writer |
+| 1 | Ask the same existing-PR confirmation. Accept → switch to the full PR reviewer→lazy-FIXER mode; decline → abort |
+| 2+ | Stop ambiguous |
+
+A missing PR is a failure only when the implementer status is not `already_resolved`.
+
+## ROUND counter and current-head gate
+
+- `round = 1` for the first review after an open PR is known.
+- Initial ISSUE resolve is ROUND 0 and does not count.
+- A ROUND counts when REVIEW completes. Its fix, if any, belongs to that ROUND.
+- Default `max_rounds = 5`; minimum 1.
+
+Immediately before every REVIEW, refresh:
+
+```bash
+gh pr view {M} --json number,state,headRefName,headRefOid
+```
+
+Require OPEN, the same PR number, and expected head branch. Send the refreshed SHA to the reviewer. Reviewer must return `reviewed_head_sha: <sha>` equal to that value. If the head changes before/during review, discard stale results and restart that ROUND against the new SHA without consuming an extra ROUND.
+
+## CLEAN and FINDINGS (strict)
+
+CLEAN requires all three:
+
+1. `VERDICT: CLEAN`
+2. Zero numbered findings/notes/partials
+3. `reviewed_head_sha` equals the refreshed current PR SHA
+
+Normalize contradictions conservatively:
+
+- CLEAN plus any item → FINDINGS
+- Both verdict lines → FINDINGS
+- Soft pass with notes → FINDINGS
+- Missing verdict → one verdict-only re-prompt; still missing → fail ROUND
+- FINDINGS with no list → one list re-prompt; still empty → fail with a synthetic finding explaining the missing details
+
+Normalize findings as:
+
+```text
+{i}. [severity:fix|note] [dimension] description (path or area)
+```
+
+Words such as crash/security/wrong/fail/broken default to `fix`; otherwise missing severity defaults to `note`. Notes remain actionable.
+
+## PR push-safety gate
+
+Run only after PR-mode FINDINGS and before spawning FIXER. Review is always allowed; fixing is not.
+
+A PASS requires all of the following to be known and true:
+
+1. PR remains OPEN and still has the recorded `headRefName`.
+2. Exact source repository and branch are known.
+3. Authenticated identity has write access to that source branch.
+4. For cross-repository/fork PRs, `maintainerCanModify` is true **and** actual source-repository branch push access is independently established. Either fact alone is insufficient.
+5. A non-mutating permission check succeeds, preferably a no-op `git push --dry-run <source-remote> <current-sha>:refs/heads/{headRefName}` from an isolated checkout, or an equivalent authenticated repository-permission query.
+6. Branch protection/rules do not require force-push or a different branch/PR.
+
+`false`, permission denied, unsupported verification, missing source repo, or any `unknown` result means STOP before FIXER spawn. Print `Push unavailable or uncertain` with PR URL, current SHA, FINDINGS, and a human handoff. Never "try the push and see" after edits.
+
+## PR FIXER isolation and branch contract
+
+Spawn FIXER lazily only after push-safety PASS, default pane `fix-{M}`. The leading role word in every task is **FIXER**.
+
+Require a dedicated non-primary git worktree. The worktree must:
+
+- live outside the primary checkout;
+- fetch the PR source branch from its source repository;
+- start at the expected pre-fix `head_sha`;
+- check out only the PR `headRefName` (or a local tracking ref that pushes explicitly to it);
+- be recorded in `worktree_paths_seen` for SWEEP.
+
+Before editing, compare worktree HEAD and current GitHub `headRefOid` to expected SHA. On mismatch, stop, refresh findings, and re-review. FIXER may modify only this worktree and scope changes to FINDINGS.
+
+Push rules: ordinary non-force push only, explicit source remote and `HEAD:refs/heads/{headRefName}`. Never push to the base repository branch by assumption. Never open/close/merge a PR.
+
+## Fix success and same-PR verification
+
+ISSUE implementer fixes and PR FIXER fixes both require:
 
 - `status: success`
-- `head_sha` different from pre-fix SHA **or** explicit proof findings were non-code (e.g. PR body `Closes #N` only) with `gh pr view` confirming the body change
-- `tests_passed: true` when the project has a test command the implementer ran; if no tests exist, `tests_passed: true` with `tests_run: none` is acceptable only when the implementer states no test harness
+- relevant tests reported (`tests_run: none` is allowed only with no test harness and an explanation)
+- no remaining blocker concealed
+- new SHA different from pre-fix SHA; if no commit is needed, stop with a handoff instead of claiming a pushed fix
 
-On fix failure: one automatic retry of the same FINDINGS on a FRESHEN'd implementer if context was high; otherwise stop with FAILED and remaining FINDINGS.
+After push, query GitHub—not the worker—as authority:
+
+```bash
+gh pr view {M} --json number,url,state,headRefName,headRefOid
+```
+
+Require same PR number, OPEN state, same `headRefName`, and a new `headRefOid`. Otherwise stop; do not open another PR or force-push. The next review uses this new SHA.
+
+One automatic retry of the same FINDINGS is allowed only after the applicable writer is FRESHENed for high context; otherwise stop FAILED.
+
+## Context gates
+
+Follow `references/context-gate.md`:
+
+- reviewer: every ROUND start;
+- ISSUE implementer: immediately before every fix;
+- PR FIXER: immediately before every fix after it exists; first lazy spawn is fresh.
+
+Never gate/spawn a writer before a CLEAN exit or before PR push-safety PASS.
+
+## Autonomous worker boot gate
+
+Every newly launched or FRESHENed reviewer, ISSUE implementer, and PR FIXER must pass this gate before receiving role work:
+
+1. Launch the configured interactive CLI and complete the readiness wait.
+2. If the launcher executable is `claude`, send `/auto-mode on` as a standalone message using the Herdr send/wait contract. Require an acknowledgement that auto-mode is active.
+3. Never use `--dangerously-skip-permissions` or `--allow-dangerously-skip-permissions` as a substitute.
+4. For another CLI, activate and verify its documented safe autonomous mode, or record that the CLI is autonomous by default. Unknown/unverifiable autonomy fails closed.
+5. Store `autonomous_mode: verified` in tracked pane state. FRESHEN clears that state, so the replacement session must pass the gate again.
+
+Do not count mode activation as a ROUND. Do not send the worker task in the same message as `/auto-mode on`; a prompt-level request to act autonomously is not verification.
 
 ## Herdr send/wait contract
 
-Every task (probe, resolve, review, fix, re-prompt):
+For every autonomy activation, probe, resolve, review, fix, or parse re-prompt:
 
-1. Capture baseline (`herdr pane read … --source recent-unwrapped`)
-2. Mint a fresh completion marker
-3. `preflight_send.py` immediately before `pane run`
-4. `wait_for_idle.py` with baseline + marker
-5. Read reply delta only — do not dump full scrollback into orchestrator context
+1. Capture recent-unwrapped baseline.
+2. Mint a fresh completion marker.
+3. Run `preflight_send.py` immediately before `pane run`.
+4. Wait with `wait_for_idle.py` using baseline + marker.
+5. Read reply delta only.
 
-Blocked status → surface to user; never send the next task into a trust dialog.
+Blocked/trust dialog: surface it; never send another task or type into the dialog.
 
-## Autonomy
+## Max rounds and handoff
 
-Workers run autonomously. The orchestrator only:
+At `max_rounds` with FINDINGS: outcome `MAX_ROUNDS`, preserve findings verbatim, leave PR open, run SWEEP, and hand off USER-MERGE. Do not imply the PR is clean.
 
-- asks the human on multiple-PR ambiguity
-- surfaces blocked dialogs
-- runs SWEEP automatically (no teardown confirmation)
-- hands off merge
-
-No mid-loop "approve this fix plan" prompts.
-
-## Max rounds handoff
-
-When FINDINGS remain after `max_rounds`:
-
-- Outcome: `MAX_ROUNDS`
-- PR stays open
-- Print remaining FINDINGS verbatim
-- Still run SWEEP (clean local workspace)
-- Still USER-MERGE (human may merge, continue manually, or close)
-
-## SWEEP (end of every successful path to handoff)
-
-Order: snapshot facts → close worker panes → remove loop worktrees → checkout default branch + clean tree → report. Never delete the remote PR branch. Never close root. See `references/cleanup.md`.
-
-## Already resolved
-
-If implementer returns `already_resolved` (no optional branch):
-
-| Open PRs linking `#{N}` | Action |
-|-------------------------|--------|
-| Zero | Outcome `ALREADY_RESOLVED`; hand off; no reviewer |
-| Exactly one | Run **one** review ROUND only (report CLEAN/FINDINGS). Do **not** enter the multi-round fix loop unless the user re-invokes the skill on that issue/PR |
-| Multiple | Stop with ambiguous-PR error |
-
-## Pre-existing open PR (preflight)
-
-Checked in Phase 1 before spawn:
-
-| Open PRs linking `#{N}` | Action |
-|-------------------------|--------|
-| Zero | Proceed with full resolve → review loop |
-| Exactly one | Ask user: (a) review-only + fix loop on that PR (skip implementer resolve), or (b) abort. Never silently re-resolve |
-| Multiple | Stop with ambiguous-PR error; do not spawn |
+SWEEP is mode-aware: ISSUE may own implementer/reviewer and issue-resolver worktrees; PR owns reviewer plus optional FIXER and its isolated worktree. A CLEAN-first PR run has no FIXER artifacts. See `references/cleanup.md`.
