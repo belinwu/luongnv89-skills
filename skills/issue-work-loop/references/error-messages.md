@@ -40,9 +40,13 @@ Use `✗ what failed`, `To fix:`, and exact identifiers. Never expose tokens. Is
 ✗ Could not enable or verify autonomous mode for {role}
 
   Worker:  {name} ({agent_cli})
-  To fix:  for Claude Code, start the interactive CLI and run: /auto-mode on
-           for another CLI, configure its documented safe autonomous mode
-  Refused: skip-permissions flags are not an allowed fallback
+  To fix:  for pi, nothing needs activation — relaunch the bare command with no auto-mode parameters
+           for Claude Code, press Shift+Tab until the auto-accept-edits mode indicator shows
+           for opencode, press Tab (or the switch_agent keybind) to select the Build agent, or set it in settings
+           for any other CLI, autonomy cannot be verified by this skill — set
+           work_loop.agent_cli (or the worker's agent_cli) to a supported
+           harness (pi, claude, opencode) and re-run
+  Refused: skip-permissions flags and invented auto-mode slash commands or startup flags are not allowed fallbacks
 
   No role task was dispatched to this worker.
 ```
