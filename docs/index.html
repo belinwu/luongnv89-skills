@@ -30,7 +30,7 @@
     remove a site, update expected_sites in that script. Run it after adding or
     removing a skill.
   -->
-  <meta name="description" content="Agent Skills v1.15.0 — 42 installable workflows for AI coding agents. Browse the GitHub Pages catalog, install with one command. Claude Code, Cursor, Copilot, Codex, OpenCode, and Google Antigravity. MIT licensed.">
+  <meta name="description" content="Agent Skills v2.0.0 — 42 installable workflows for AI coding agents. Browse the GitHub Pages catalog, install with one command. Claude Code, Cursor, Copilot, Codex, OpenCode, and Google Antigravity. MIT licensed.">
   <link rel="icon" href="assets/logo/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -579,7 +579,7 @@
   <!-- HERO (PAS opener) -->
   <header class="hero">
     <div class="container">
-      <div class="badge"><strong>v1.15.0</strong> · <strong>42 skills</strong> · <a href="https://luongnv89.github.io/skills/" style="color: inherit; text-decoration: underline;">Live on GitHub Pages</a> · MIT</div>
+      <div class="badge"><strong>v2.0.0</strong> · <strong>42 skills</strong> · <a href="https://luongnv89.github.io/skills/" style="color: inherit; text-decoration: underline;">Live on GitHub Pages</a> · MIT</div>
       <h1>Stop Rebuilding Agent Skills</h1>
       <p class="hero-sub">
         Your AI coding agent restarts from zero every session. Agent Skills gives you a browsable catalog of standalone, versioned workflows — including this site from <code class="mono">docs/</code>. Install only what you need with one command. Your agent follows the same process every time.
@@ -704,7 +704,7 @@
         <code>npx skills add https://github.com/luongnv89/skills --skill code-review</code>
       </div>
       <p style="margin-top: 1rem; color: var(--muted); font-size: 0.9rem;">
-        Install several at once: add <code class="mono">--skill security-setup --skill code-review</code> or <code class="mono">--skill website-cloner</code>. Latest tagged release in the changelog: <a href="https://github.com/luongnv89/skills/releases/tag/v1.15.0">v1.15.0</a>.
+        Install several at once: add <code class="mono">--skill security-setup --skill code-review</code> or <code class="mono">--skill website-cloner</code>. Latest tagged release in the changelog: <a href="https://github.com/luongnv89/skills/releases/tag/v2.0.0">v2.0.0</a>.
       </p>
       <a class="btn btn-primary" href="https://github.com/luongnv89/skills#install" style="margin-top: 1.5rem;">Get the Install Commands</a>
     </div>
@@ -714,23 +714,23 @@
   <section id="whats-new">
     <div class="container">
       <div class="section-label">Release</div>
-      <h2>What's new in v1.15.0 + Unreleased</h2>
-      <p class="lead">Catalog reconciliation, current skill versions, suite-aware installers, and runbook validation.</p>
+      <h2>What's new in v2.0.0</h2>
+      <p class="lead">Major catalog release — breaking rename, new shipping and modernization skills, orchestrator succession, and a measurable evals harness. This GitHub Pages home is the public catalog.</p>
       <div class="grid-3">
         <div class="card">
-          <h3>Current catalog docs</h3>
-          <p>README and this GitHub Pages home now reflect the 42 installable <code class="mono">SKILL.md</code> entries in <code class="mono">skills/</code>.</p>
+          <h3>Breaking: doc-manager</h3>
+          <p><code class="mono">docs-generator</code> is now <code class="mono">doc-manager</code>. Update install flags and bookmarks. Overlapping skills were consolidated into fewer entry points.</p>
         </div>
         <div class="card">
-          <h3>New &amp; expanded skills</h3>
-          <p>fork-upstream-sync, herdr-agent-comms, diagram-generator, code-review modes, and the website-cloner suite.</p>
+          <h3>New skills</h3>
+          <p>codebase-modernizer, issue-work-loop, diagram-generator, fork-upstream-sync, and herdr-agent-comms.</p>
         </div>
         <div class="card">
-          <h3>Install &amp; doc validation</h3>
-          <p>Suite-aware <code class="mono">install.sh</code> / <code class="mono">remote-install.sh</code>, Google Antigravity paths, and check-only docs validators.</p>
+          <h3>HANDOFF &amp; evals</h3>
+          <p>Orchestrator context succession plus an evals delta harness so catalog changes stay measurable.</p>
         </div>
       </div>
-      <a class="btn btn-secondary" href="https://github.com/luongnv89/skills/releases/tag/v1.15.0" style="margin-top: 2rem;">Release notes on GitHub</a>
+      <a class="btn btn-secondary" href="https://github.com/luongnv89/skills/releases/tag/v2.0.0" style="margin-top: 2rem;">Release notes on GitHub</a>
     </div>
   </section>
 
@@ -745,7 +745,7 @@
       <div class="grid-3">
         <div class="card">
           <h3>42 skills</h3>
-          <p>Code review, security-setup, release automation, website-cloner suite, PRDs, Herdr/tmux agent comms — each installs on its own.</p>
+          <p>Code review, issue-work-loop, codebase-modernizer, release-manager, website-cloner suite, Herdr/tmux agent comms — each installs on its own.</p>
         </div>
         <div class="card">
           <h3>Multi-tool support</h3>
@@ -757,7 +757,7 @@
         </div>
       </div>
       <p style="margin-top: 2rem; color: var(--muted); font-size: 0.9rem;">
-        Catalog <strong>v1.15.0</strong> plus Unreleased docs — 42 installable workflows, suite-aware installers, and current README parity.
+        Catalog <strong>v2.0.0</strong> on GitHub Pages — 42 installable workflows, suite-aware installers, HANDOFF succession, and evals harness.
       </p>
     </div>
   </section>
@@ -767,7 +767,7 @@
     <div class="container">
       <div class="section-label">Catalog</div>
       <h2>Pick what you need today</h2>
-      <p class="lead">Seven categories — plus multi-phase suites like website-cloner. Install one skill or ten. They stand alone.</p>
+      <p class="lead">Seven categories — plus multi-phase suites like website-cloner and diagram-generator. Install one skill or ten. They stand alone.</p>
       <div class="categories">
         <span class="tag">Code Quality</span>
         <span class="tag">Shipping</span>
@@ -783,8 +783,8 @@
           <p>Structured reviews by severity using Code Smells and Pragmatic Programmer patterns.</p>
         </div>
         <div class="feature">
-          <h3>auto-push</h3>
-          <p>Stage, commit, and push with secret scanning and large-file detection.</p>
+          <h3>codebase-modernizer</h3>
+          <p>Read-only whole-repo audit and a phased, testable modernization plan.</p>
         </div>
         <div class="feature">
           <h3>release-manager</h3>
@@ -795,8 +795,8 @@
           <p>Generate or reconcile Markdown docs to match the code, with citations and runbook checks.</p>
         </div>
         <div class="feature">
-          <h3>security-setup</h3>
-          <p>Local pre-commit secrets, dependency scans, and static analysis with gated CI.</p>
+          <h3>issue-work-loop</h3>
+          <p>Implementer and reviewer loop on one GitHub issue until the PR review is CLEAN.</p>
         </div>
         <div class="feature">
           <h3>herdr-agent-comms</h3>
@@ -849,7 +849,7 @@
   <section class="final-cta">
     <div class="container">
       <h2>Install your first skill in under a minute</h2>
-      <p class="lead">Catalog v1.15.0 plus Unreleased docs — no bundle, no framework. One command puts a complete workflow on your machine.</p>
+      <p class="lead">Ship v2.0.0 — no bundle, no framework. One command installs a standalone workflow. Breaking: use <code class="mono">--skill doc-manager</code>, not <code class="mono">docs-generator</code>.</p>
       <a class="btn btn-primary" href="https://github.com/luongnv89/skills#install">Install code-review</a>
       <p class="risk-reversal">MIT licensed · open source · global or per-project scope</p>
     </div>
@@ -859,7 +859,7 @@
     <div class="container">
       <p>
         <a href="https://github.com/luongnv89/skills">GitHub</a> ·
-        <a href="https://github.com/luongnv89/skills/releases/tag/v1.15.0">v1.15.0</a> ·
+        <a href="https://github.com/luongnv89/skills/releases/tag/v2.0.0">v2.0.0</a> ·
         <a href="https://github.com/luongnv89/skills/blob/main/CONTRIBUTING.md">Contribute</a> ·
         <a href="https://github.com/luongnv89/skills/blob/main/LICENSE">MIT License</a>
       </p>

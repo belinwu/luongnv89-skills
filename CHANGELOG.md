@@ -1,33 +1,15 @@
 # Changelog
 
 
-## Unreleased
+## v2.0.0 — 2026-08-18
 
-### Fixed
-- **codebase-modernizer evals 1, 8, 10, 11 asserted something no run could satisfy** (#88): each demanded `git diff --stat` be empty at the end of the run, which is false on any genuinely stale repo — the intended audit target is already dirty (44 modified tracked files plus untracked entries) before the skill starts. Rewritten as a **delta** assertion: `git status --porcelain`, the full `git diff`, and a SHA-256 manifest of every git-visible path (tracked plus untracked, honouring the target's `.gitignore`) must be byte-identical to a pre-run snapshot, modulo the declared artifact allowlist. Eval 1's gloss ("no tracked file's content was modified") was likewise an absolute claim and is now stated as delta-against-baseline. Eval 11 landed on main via #94 after this branch started and still used the empty-stat claim; it is now the same delta. The skill's own read-only contract (`SKILL.md` 1.2.2, `references/report-template.md`) matches.
-- **`scripts/eval-readonly-check.sh` re-opened the tracked-file exemption whenever a run SHRANK the git index** (#88): the tracked set gating the directory allowlist was derived at verify time and applied to both sides of the comparison, so `git rm --cached dist/bundle.js` (then rewriting the file) or a full `git rm dist/bundle.js` left the path untracked *now*, both sides dropped it as "untracked build output", and destroying committed content printed three OKs and exited 0. `snapshot` now records the pre-run tracked set as `tracked.txt` and `verify` gates on the **union** of the snapshot-time and post-run sets — a path tracked at either end is a tracked file for `references/baseline.md:30-32`'s purposes. A snapshot predating `tracked.txt` falls back to the post-run set instead of hard-failing. The `git status --porcelain` comparison uses the same tracked-aware predicate, so it names the breach (`D  dist/bundle.js`) rather than masking it. New or rebuilt *untracked* build output still passes
-- `scripts/eval-readonly-check.sh`: a manifest-derivation failure inside `verify` was reported as exit 1 (contract breach) instead of exit 2 (environment error) — `derive_manifest_or_die` sat on the left of a pipeline, so its `exit 2` terminated only the subshell and execution fell through to the comparison; it now derives to a temp file first, matching the strict branch. `cd "$ROOT"` gained a `|| exit 2` guard (SC2164, the script's only shellcheck warning)
-- **`scripts/eval-readonly-check.sh` had four paths that reported a full PASS while the target changed** (#88): a path git C-quotes (`café.txt` under the default `core.quotePath`) never entered the manifest in either snapshot or verify, so rewriting it passed silently — the enumeration now uses `git ls-files -z` and refuses a path holding a tab or newline instead of mis-parsing it; a `--target` that was not a git work tree left all three derivations empty and compared empty-to-empty, so it is now refused up front for every subcommand, `verify` checks the snapshot's own `target.txt` before trusting it, and a 0-path manifest is a hard error rather than a printed statistic; a trailing-slash allowlist entry matched at any depth and matched a bare *file* of that name, letting `src/dist/evil.js` and a root file called `target` through — directory entries are now anchored to the repo root and the bare-name form is honoured only where `git status` collapses a new directory to `?? coverage/`; and a listed path that cannot be read is now a loud failure rather than a silent skip
-- `scripts/eval-readonly-check.sh`: a value-taking flag in final position looped forever (`shift 2` with one argument left never decrements `$#`); relative `--target`/`--manifest`/`--dest` resolved against the skills repo instead of the caller's cwd, so a relative `--manifest` created a directory inside the catalog; and the `git diff` comparison was never allowlist-filtered, so re-auditing a repo whose `MODERNIZATION_REPORT.md` is already **tracked** reported a breach for a write the contract permits
-- **`scripts/eval-readonly-check.sh`'s allowlist exempted TRACKED files, and `restore` moved files before checking the snapshot's provenance** (#88): a trailing-slash entry (`dist/`, `target/`, `coverage/`, `obj/`, `.gradle/`, `.dart_tool/`) exempted every path under it, so a run that rewrote a **committed** `dist/bundle.js` printed three OKs and exited 0 — a false PASS on the skill's headline read-only contract. Those entries now carry only what `references/baseline.md:30-32` grants them ("New *untracked* build output ... is acceptable ... A changed **tracked** file is not"): a `git diff` section is never exempted by a directory entry, since everything git diffs is tracked by definition, and the manifest comparison retains a directory-allowlisted path whenever it is tracked in the target, which also catches a **staged** rewrite that `git diff` cannot see. New or rebuilt *untracked* build output still passes, and a declared artifact named as a plain entry (`MODERNIZATION_REPORT.md`) stays exempt even when tracked. Separately, `restore` validated `target.txt` only after its `mv` loop, so a mismatched `--manifest` relocated the target's own pre-existing `CODE_REVIEW.md` and `dist/` out of the repo and only then exited 2; provenance is now checked before anything is created or moved
-- `scripts/validate-evals.py` checked only truthiness, so a case with `prompt: ["not","a","string"]`, `expected_output: {}`, `files: "nope"` and object-valued `expectations` was reported `[PASS]` (#88). Types are now enforced against schemas.md:9-45 and grader.md:15 (`expectations` is a list of **strings**); `expectations: []` stays a WARN, the honest state CONTRIBUTING.md blesses. `aso-marketing`'s three cases carried their expectations as `{"text": ..., "type": "boolean"}` objects and are flattened to the bare strings the grader actually reads — `type` is metadata neither schemas.md nor grader.md consumes. `--path` with an absolute argument no longer raises `ValueError`
+Catalog-wide consolidation and rename: one primary skill per intent, code-faithful docs, and a checkable read-only eval harness. **42** installable `SKILL.md` files (nested suite children included).
 
-### Tooling
-- Add `scripts/validate-evals.py` (stdlib only): walks `skills/*/evals/evals.json` and suite sub-skills, enforcing the canonical `{skill_name, evals:[{id, kind, prompt, expected_output, files, expectations}]}` shape. **FAIL** tier (non-zero exit) covers a wrong top-level shape, a `skill_name` that does not match its directory, missing/duplicate/non-integer ids, missing `prompt` or `expected_output`, assertion lists parked under the dead `assertions`/`expected_behavior` keys, and unknown keys; **WARN** tier (exit 0) surfaces `expectations: []`, a file where no case declares `kind`, and a missing `files`
-- Add `scripts/eval-readonly-check.sh` (`snapshot` / `verify` / `restore`): zero-dependency harness that checks a read-only skill's contract as a delta against a pre-run snapshot. The SHA-256 path manifest is what makes it work — `git diff` cannot see untracked files, so a delegate writing a new `.github/workflows/ci.yml` or test file passes an empty `git diff --stat` unnoticed. The declared-artifact allowlist is transcribed from the skill's own contract text with `file:line` citations, and transcript-level assertions are reported as `[MANUAL] ... SKIPPED` rather than dropped
-
-### Changed
-- Converge seven drifted `evals.json` files onto the canonical schema, content-preserving: `aso-marketing` (`assertions` → `expectations`); `fork-upstream-sync` (`skill` → `skill_name`, `expected_behavior` → `expectations`, `files: []` added, string ids replaced by integers 1-3 in file order with each original slug preserved under an optional `name` key, and `expected_output` rendered from that case's own expectation list); `herdr-agent-comms`, `landing-page-generator`, `opencode-runner`, `tmux-agent-comms`, `viral-product-evaluator` (explicit `expectations: []`). No `kind` was written into a file that never declared one — it defaults to `happy-path`, so filling it in would guess at cases that may really be negative-trigger. No expectation content was invented; the empty lists are the honest state and the WARN tier keeps them visible
-
-### Docs
-- Document the canonical `evals.json` shape, `python3 scripts/validate-evals.py`, its FAIL/WARN tiers, the optional `name` key, and the read-only delta harness in CONTRIBUTING.md
-- Reconcile root README skill catalog to on-disk `metadata.version` for all installable skills; add `fork-upstream-sync`, `herdr-agent-comms`, Google Antigravity install path, Project docs index, install validation link
-- Reconcile `docs/index.html` GitHub Pages copy to current catalog state: v1.15.0 baseline, Google Antigravity support, and no removed `clean-code` catalog card
-- Correct the `docs/index.html` skill count to 42 at every site, state the counting rule (every tracked `SKILL.md` under `skills/`, nested suite sub-skills included) beside the literal, and assert it from `scripts/validate-contribute.sh` so the next skill added cannot silently re-break it
-- Fix CONTRIBUTING setup commands to external skill-creator paths (`~/.claude/skills/skill-creator/scripts/`); align frontmatter example with `metadata.version`
-- Add `scripts/validate-install.sh`, `scripts/validate-contribute.sh` (check-only), `docs/DECISIONS.md`, `docs/troubleshooting.md`, `docs/archive/README.md`
-- Move former root documentation drafts into `docs/archive/` and explicitly unignore archived copies while keeping future root drafts ignored
-- Align `docs/guide-building-agent-skills.md` with catalog conventions (`docs/README.md`, suite nesting, skill-creator CLI paths)
+### Breaking Changes
+- **`docs-generator` → `doc-manager` (#75):** `/docs-generator` and `--skill docs-generator` are removed — use `/doc-manager`. Reoriented from “restructure docs into a hierarchy” to “generate missing or update existing docs so every page matches the code.” Every non-obvious claim is cited to `path:line`; ambiguities are asked and logged to `docs/DECISIONS.md`. Uninstall leftover `docs-generator` copies so they do not compete for triggers.
+- **Code-quality cluster merged into `code-review` (#72 / #74):** `code-optimizer`, `clean-code`, and `slop-cleanup` are **removed** as separate skills. **Migration:** `/code-optimizer` → `code-review mode:perf`; `/clean-code` → `code-review mode:clean`; `/slop-cleanup` → `code-review mode:cleanup`. Only `cleanup` writes code, and it never fires by inference.
+- **`readme-to-landing-page` → `landing-page-generator` Mode B (#72 / #74):** if you installed `readme-to-landing-page`, install `landing-page-generator` and remove the old skill.
+- **`drawio-generator` + `excalidraw-generator` nest under `diagram-generator`:** invocations `/drawio-generator` and `/excalidraw-generator` are unchanged; the install path is nested. Use `/diagram-generator` to pick the engine by output format.
 
 ### New Skills
 | Skill | Version |
@@ -42,11 +24,13 @@
 
 **codebase-modernizer (1.2.0):** every emitted plan now opens with an unconditional **Pre — Agent environment** step before P0 Stabilize (P0–P4 keep their numbers). Pre schedules a runnable agent environment and create-or-improve of `CLAUDE.md` / `AGENTS.md` via `/agent-config create|update` — planned only; the audit still never writes those files.
 
-**codebase-modernizer (1.2.1):** Pre is exempt from the still-green suite AC when the baseline is RED. Pre.3 / `AGENTS.md` is create-or-update against agent-config checklists only; recorded build/test commands live on Pre.1 notes and Pre.2 / `CLAUDE.md`.
+**codebase-modernizer (1.2.1):** Pre is exempt from the still-green suite AC when the baseline is RED. Pre.3 / `AGENTS.md` is create-or-update against agent-config checklists only; recorded build/test commands live on Pre.1 notes and Pre.2 / `CLAUDE.md`. (#93, #94)
 
-**codebase-modernizer (1.2.2):** the read-only contract is a **delta** against a pre-run snapshot, not an empty `git diff --stat`. A stale already-dirty tree is the intended target; the empty-stat check could never pass there.
+**codebase-modernizer (1.2.2):** the read-only contract is a **delta** against a pre-run snapshot, not an empty `git diff --stat`. A stale already-dirty tree is the intended target; the empty-stat check could never pass there. (#88, #95)
 
 **issue-work-loop (1.1.5):** resolves a single GitHub issue through a Herdr-pane implementer→reviewer loop until the PR review is CLEAN. Implementer runs `/issue-resolver`, reviewer runs `/issue-pr-review --review-only` in a separate pane; every FINDING counts, including notes (no soft-pass). Reviewer is FRESHENed at ROUND start and implementer before each fix when context crosses 50%; `--no-cleanup` skips SWEEP for debug; worker panes and loop worktrees are swept at the end by default; merging is always left to the human.
+
+**herdr-agent-comms:** spawn and message a multi-agent fleet in Herdr panes (split-pane default, tab-per-agent opt-in). (#77)
 
 ### Skills Updated
 | Skill | Version Change |
@@ -59,6 +43,7 @@
 | drawio-generator | 1.2.2 → 1.2.3 (nested under diagram-generator umbrella) |
 | excalidraw-generator | 1.3.2 → 1.3.3 (nested under diagram-generator umbrella) |
 | viral-product-evaluator | 1.2.3 → 1.2.4 (update merged-skill cross-reference) |
+| dont-make-me-think | 1.2.1 → 1.3.2 (screenshot pre-processing script; #73) |
 | agent-config | → 1.3.1 |
 | aso-marketing | → 1.2.1 |
 | auto-push | → 1.0.3 |
@@ -83,7 +68,9 @@
 
 **Orchestrator context handoff (herdr-agent-comms 1.23.0, tmux-agent-comms 2.2.0):** the main agent now gates its own context window instead of only its workers'. It self-checks usage at three named points — before a spawn wave, before a broadcast, and after each relayed reply — and at or above a 50% threshold (overridable in conversation) performs a **HANDOFF**: it spawns a successor orchestrator with the skill's own guarded spawn path (`main-g<N>` pane in Herdr, `<folder>-main-g<N>` session in tmux), delivers a compact fleet brief through the normal baseline/marker/preflight cycle, waits for an explicit `HANDOFF ACCEPTED` ack, then goes read-only and announces the successor. Orchestrator is now a **role, not a pane** — the outgoing pane/session is retired, never closed without confirmation — and exactly one orchestrator holds write access at a time. When usage is unreportable, a countable fallback (20 relayed reads or 4 spawn waves) drives the same decision. See `references/context-succession.md` in either skill.
 
-**Breaking (doc-manager):** `docs-generator` renamed to `doc-manager`; the `/docs-generator` invocation and `--skill docs-generator` install path are removed — use `/doc-manager`. Reoriented from "restructure docs into a hierarchy" to "generate missing or update existing docs so every page matches the code." New behavior: every non-obvious claim is cited to `path:line`, ambiguities are resolved by asking and logged to `docs/DECISIONS.md`, nothing is invented. Runbook (deploy/setup/process) docs additionally get a check-only `validate.sh` and a maintained `docs/troubleshooting.md`. **2.0.1:** runbook acceptance no longer hard-requires live `--check` exit 0 for operator env/network prereqs; validate script template parses all flags (`--check` + `--run-destructive`).
+**tmux-agent-comms:** new sessions open in app terminal tabs by default, with detached fallback for background fleets or environments without a tab facility. (#76)
+
+**dont-make-me-think:** `scripts/process_screenshots.py` extracts metadata, palette, layout regions, density, and quality before visual review so the agent consumes structured JSON/markdown instead of generating image-processing code at runtime. (#73)
 
 ### Removed Skills (merged into code-review modes)
 | Skill | Merged into |
@@ -112,12 +99,36 @@ Fewer, clearer entry points — one primary skill per intent.
   fires by inference. **Migration:** `/code-optimizer` → `code-review mode:perf`; `/clean-code` →
   `code-review mode:clean`; `/slop-cleanup` → `code-review mode:cleanup`.
 
+### Tooling
+- Add `scripts/validate-evals.py` (stdlib only): walks `skills/*/evals/evals.json` and suite sub-skills, enforcing the canonical `{skill_name, evals:[{id, kind, prompt, expected_output, files, expectations}]}` shape. **FAIL** tier (non-zero exit) covers a wrong top-level shape, a `skill_name` that does not match its directory, missing/duplicate/non-integer ids, missing `prompt` or `expected_output`, assertion lists parked under the dead `assertions`/`expected_behavior` keys, and unknown keys; **WARN** tier (exit 0) surfaces `expectations: []`, a file where no case declares `kind`, and a missing `files`
+- Add `scripts/eval-readonly-check.sh` (`snapshot` / `verify` / `restore`): zero-dependency harness that checks a read-only skill's contract as a delta against a pre-run snapshot. The SHA-256 path manifest is what makes it work — `git diff` cannot see untracked files, so a delegate writing a new `.github/workflows/ci.yml` or test file passes an empty `git diff --stat` unnoticed. The declared-artifact allowlist is transcribed from the skill's own contract text with `file:line` citations, and transcript-level assertions are reported as `[MANUAL] ... SKIPPED` rather than dropped
+
+### Changed
+- Converge seven drifted `evals.json` files onto the canonical schema, content-preserving: `aso-marketing` (`assertions` → `expectations`); `fork-upstream-sync` (`skill` → `skill_name`, `expected_behavior` → `expectations`, `files: []` added, string ids replaced by integers 1-3 in file order with each original slug preserved under an optional `name` key, and `expected_output` rendered from that case's own expectation list); `herdr-agent-comms`, `landing-page-generator`, `opencode-runner`, `tmux-agent-comms`, `viral-product-evaluator` (explicit `expectations: []`). No `kind` was written into a file that never declared one — it defaults to `happy-path`, so filling it in would guess at cases that may really be negative-trigger. No expectation content was invented; the empty lists are the honest state and the WARN tier keeps them visible
+
 ### Bug Fixes
-- **issue-work-loop (1.2.1 → 1.3.1)**: Replace the autonomous worker boot gate with a per-harness matrix — pi launches bare and is autonomous by default (zero auto-mode parameters); Claude Code starts plain and is switched via the Shift+Tab keystroke, verified by its auto-accept-edits mode indicator; opencode starts plain and is switched to the full-permission Build agent via Tab or settings. Removes the nonexistent auto-mode slash command and invented startup flags that broke fresh-machine startup; skip-permissions flags remain refused, now with a working shortcut alternative documented at every refusal. (#83)
-- **herdr-agent-comms (1.22.0 → 1.22.2)**: Launcher guidance drops the unverified pi `--skill` flag and replaces vague "verified flags for Claude Code, Codex, or OpenCode" with concrete direction to launch `claude`/`opencode` bare (mode switching is post-start and owned by the caller), keeping pi's verified `--model`/`--thinking`. (#83)
+- **codebase-modernizer evals 1, 8, 10, 11 asserted something no run could satisfy** (#88 / #95): each demanded `git diff --stat` be empty at the end of the run, which is false on any genuinely stale repo. Rewritten as a **delta** assertion against a pre-run snapshot (porcelain, full `git diff`, SHA-256 manifest), modulo the declared artifact allowlist.
+- **`scripts/eval-readonly-check.sh`:** tracked-file exemption when the index shrinks; directory allowlist no longer exempts tracked files; C-quoted paths, non-git targets, trailing-slash allowlist, flag/`cwd` handling, pipeline `exit 2` for manifest derivation, and `restore` provenance-before-move. (#88)
+- `scripts/validate-evals.py` checked only truthiness, so invalid types were reported `[PASS]` (#88). Types are now enforced against schemas.md / grader.md; `aso-marketing` object-valued expectations flattened to strings.
+- **issue-work-loop (1.2.1 → 1.3.1)**: Replace the autonomous worker boot gate with a per-harness matrix — pi launches bare and is autonomous by default; Claude Code starts plain and is switched via Shift+Tab; opencode starts plain and is switched to the full-permission Build agent via Tab or settings. Removes the nonexistent auto-mode slash command and invented startup flags. (#83)
+- **herdr-agent-comms (1.22.0 → 1.22.2)**: Launcher guidance drops the unverified pi `--skill` flag and replaces vague “verified flags” with concrete direction to launch `claude`/`opencode` bare. (#83)
+- **dont-make-me-think:** review fixes for screenshot pre-processing (`text_regions_estimated`, `--json`/`--markdown` flags, NameError/dead code). (#73)
+- **doc-manager 2.0.1:** runbook acceptance no longer hard-requires live `--check` exit 0 for operator env/network prereqs; validate script template parses all flags (`--check` + `--run-destructive`).
+
+### Documentation
+- Document the canonical `evals.json` shape, `python3 scripts/validate-evals.py`, its FAIL/WARN tiers, the optional `name` key, and the read-only delta harness in CONTRIBUTING.md
+- Reconcile root README skill catalog to on-disk `metadata.version` for all installable skills; add `fork-upstream-sync`, `herdr-agent-comms`, Google Antigravity install path, Project docs index, install validation link (#96)
+- Reconcile `docs/index.html` GitHub Pages copy to current catalog state: v1.15.0 baseline, Google Antigravity support, and no removed `clean-code` catalog card
+- Correct the `docs/index.html` skill count to 42 at every site, state the counting rule (every tracked `SKILL.md` under `skills/`, nested suite sub-skills included) beside the literal, and assert it from `scripts/validate-contribute.sh` (#89, #92)
+- Fix CONTRIBUTING setup commands to external skill-creator paths (`~/.claude/skills/skill-creator/scripts/`); align frontmatter example with `metadata.version`
+- Add `scripts/validate-install.sh`, `scripts/validate-contribute.sh` (check-only), `docs/DECISIONS.md`, `docs/troubleshooting.md`, `docs/archive/README.md`
+- Move former root documentation drafts into `docs/archive/` and explicitly unignore archived copies while keeping future root drafts ignored
+- Align `docs/guide-building-agent-skills.md` with catalog conventions (`docs/README.md`, suite nesting, skill-creator CLI paths)
 
 ### Other
 - **chore(skills)**: trim SKILL.md files under 500-line limit (#67)
+
+**Full Changelog**: https://github.com/luongnv89/skills/compare/v1.15.0...v2.0.0
 
 ## v1.15.0 — 2026-07-03
 
